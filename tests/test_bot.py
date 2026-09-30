@@ -117,9 +117,14 @@ def test_skills_dedupe_case_insensitive_and_skip_generic():
 
     job = make_job(rules_result={"relevant_skills": ["Python", "python", "API", "бот", "n8n"]})
     assert relevant_skills(job) == ["Python", "n8n"]
-    # fewer than two specific skills: generic ones are kept
-    job = make_job(rules_result={"relevant_skills": ["api", "Python", "бот"]})
-    assert relevant_skills(job) == ["api", "Python", "бот"]
+    # fewer than two specific skills: never a lone generic word, category label is added
+    job = make_job(rules_result={"relevant_skills": ["api", "Python", "бот"]}, category="wordpress")
+    assert relevant_skills(job) == ["Python", "WordPress"]
+    job = make_job(rules_result={"relevant_skills": ["бот"]}, category="telegram_automation")
+    assert relevant_skills(job) == ["Telegram-боты и автоматизация"]
+    job = make_job(rules_result={"relevant_skills": ["бот"]}, llm_result={"relevant_skills": ["aiogram"]},
+                   category="ai_llm")
+    assert relevant_skills(job) == ["aiogram", "AI/LLM"]
 
 
 async def test_application_send_ok_but_bookkeeping_fails_no_failed_message():
@@ -153,3 +158,45 @@ async def test_application_send_ok_but_bookkeeping_fails_no_failed_message():
     assert len(sent) == 1 and "Готов помочь" in sent[0]
     assert not any("Не удалось" in t for t in sent)
     assert job.id not in h._generating
+
+
+TELEJOBO_TEXT = """💬 Разработчик Telegram чатбота для сервиса аренды байков
+
+Что должен уметь бот:
+- брать оплату
+Писать: @aziza_design
+📣 Разместить вакансию / рекламу
+⚡ Получать больше вакансий быстрее: «Работодром PRO»
+https://t.me/RD_vacbot?start=uttelejobo_vac
+https://t.me/RD_adsbot?start=uttelejobo_ads
+https://t.me/rabotodrombot?start=shield_telejobo"""
+
+
+def telejobo_job():
+    return make_job(
+        title="Разработчик Telegram чатбота для сервиса аренды байков", normalized_text=TELEJOBO_TEXT,
+        fit_score=99, budget=None, category="telegram_automation",
+        rules_result={"relevant_skills": ["бот"]},
+    )
+
+
+def test_telejobo_card_plain_and_html():
+    plain = build_card(telejobo_job(), None, sources("telejobo"), SETTINGS, html=False)
+    assert "t.me" not in plain and "Разместить" not in plain and "Получать больше" not in plain
+    assert "Писать: @aziza_design" in plain
+    assert plain.count("Разработчик Telegram чатбота для сервиса аренды байков") == 1  # 💬 duplicate of the title is dropped
+    assert "\n\nПочему подходит:\n• Telegram-боты и автоматизация\n\n📡 telejobo" in plain
+    assert "• бот" not in plain
+    html = build_card(telejobo_job(), None, sources("telejobo"), SETTINGS, html=True)
+    assert "<b>Разработчик Telegram чатбота для сервиса аренды байков</b>" in html
+    assert "t.me" not in html
+
+
+def test_strip_footer_and_title_helpers():
+    from src.telegram.parser import drop_title_line, strip_footer
+
+    assert strip_footer("Текст\nреклама: @x\nt.me/foo_bot") == "Текст"
+    assert strip_footer("Текст\nt.me/foo_bot\nещё текст") == "Текст\nt.me/foo_bot\nещё текст"
+    assert strip_footer("A\nспецмаркер здесь", ["СпецМаркер"]) == "A"
+    assert drop_title_line("🔥  Нужен  БОТ\nтело", "нужен бот") == "тело"
+    assert drop_title_line("другое\nНужен бот", "Нужен бот") == "другое\nНужен бот"

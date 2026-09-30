@@ -348,3 +348,46 @@ def message_text_with_links(message) -> str:
     if extra:
         text = text + "\n" + "\n".join(extra)
     return text
+
+
+# --- display helpers (card only; the stored text is never modified) ---
+FOOTER_MARKERS = (
+    "разместить ваканси", "разместить реклам", "получать больше ваканси", "подписаться",
+    "подпишись", "наш канал", "реклама:", "по вопросам рекламы", "источник:",
+)
+_BOT_LINK_RE = re.compile(
+    r"^\W*(?:https?://)?(?:t\.me|telegram\.me)/[A-Za-z0-9_]*bot\b\S*\W*$", re.I)
+
+
+def strip_footer(text: str, extra_markers=()) -> str:
+    """Drop trailing promo lines (bot deep-links, ad/subscribe markers) from a channel post."""
+    markers = [m.lower() for m in (*FOOTER_MARKERS, *(extra_markers or ())) if m and str(m).strip()]
+    markers = [str(m).strip().lower() for m in markers]
+    lines = (text or "").rstrip().split("\n")
+    while lines:
+        line = lines[-1].strip()
+        if not line or _BOT_LINK_RE.match(line) or any(m in line.lower() for m in markers):
+            lines.pop()
+            continue
+        break
+    return "\n".join(lines).rstrip()
+
+
+def _title_key(s: str) -> str:
+    s = _strip_emoji(unicodedata.normalize("NFKC", s or ""))
+    s = re.sub(r"^[\W_]+", "", s)
+    return re.sub(r"\s+", " ", s).strip().casefold()
+
+
+def drop_title_line(body: str, title: str) -> str:
+    """Remove the first non-empty line of ``body`` if it repeats ``title`` (ignoring emoji/case)."""
+    key = _title_key(title)
+    if not key or not body:
+        return body
+    lines = body.split("\n")
+    for i, line in enumerate(lines):
+        if line.strip():
+            if _title_key(line) == key:
+                return "\n".join(lines[i + 1:]).strip()
+            break
+    return body
