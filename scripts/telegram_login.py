@@ -13,11 +13,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import asyncio  # noqa: E402
 import getpass  # noqa: E402
 import os  # noqa: E402
+import re  # noqa: E402
 
 from telethon import TelegramClient  # noqa: E402
-from telethon.errors import SessionPasswordNeededError  # noqa: E402
 
 from src.config import load_settings  # noqa: E402
+
+
+def _ask_phone() -> str:
+    """Phone number in international format; asks again until it has digits only."""
+    while True:
+        raw = input("Номер телефона аккаунта в международном формате (например +79161234567): ")
+        digits = re.sub(r"[+()\s\-]", "", raw)
+        if digits.isdigit() and 10 <= len(digits) <= 15:
+            return "+" + digits
+        print("Не похоже на номер. Введите только цифры с кодом страны, например +79161234567.")
 
 
 async def main() -> int:
@@ -27,16 +37,15 @@ async def main() -> int:
         return 2
     s.session_file.parent.mkdir(parents=True, exist_ok=True)
     client = TelegramClient(str(s.session_file), s.telegram_api_id, s.telegram_api_hash)
-    await client.connect()
     try:
-        if not await client.is_user_authorized():
-            phone = input("Phone (international format, +...): ").strip()
-            await client.send_code_request(phone)
-            code = input("Code from Telegram: ").strip()
-            try:
-                await client.sign_in(phone, code)
-            except SessionPasswordNeededError:
-                await client.sign_in(password=getpass.getpass("2FA password: "))
+        # Telethon's own login flow: re-asks on an invalid phone or a wrong code, asks
+        # for the 2FA password when the account has one
+        await client.start(
+            phone=_ask_phone,
+            code_callback=lambda: input("Код из Telegram (придёт в чат «Telegram»): ").strip(),
+            password=lambda: getpass.getpass("Пароль двухэтапной проверки (2FA): "),
+            max_attempts=5,
+        )
         me = await client.get_me()
         print(f"OK: logged in as {me.first_name} ({me.id})")
         print(f"Session file: {s.session_file}.session - treat it as a secret, never commit or share it.")
