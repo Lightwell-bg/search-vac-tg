@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import html
 import io
+import asyncio
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +23,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Message
 
 from ..profile.service import ALLOWED_EXTENSIONS, MAX_UPLOAD_BYTES, parse_items
-from ..settings_store import POLL_INTERVALS
+from ..settings_store import POLL_INTERVALS, format_interval, parse_interval
 from .stats_format import format_stats
 
 log = logging.getLogger("bot")
@@ -46,6 +48,7 @@ CALLBACK_PREFIX = r"^(m|ch|th|pi|pf):"
 class MenuStates(StatesGroup):
     waiting_channel = State()
     waiting_model = State()
+    waiting_interval = State()
     waiting_upload = State()
     waiting_add_skills = State()
     waiting_remove_skills = State()
@@ -90,7 +93,7 @@ def main_text(rs, channels: list[dict] | None) -> str:
             f"Порог {rs.notify_score} / высокий {rs.high_fit_score}\n"
             f"Платные контакты: {paid}\n"
             f"Модель: <code>{_e(rs.openrouter_model)}</code>\n"
-            f"⏱ Проверка каналов: каждые {rs.poll_interval_sec // 60} мин\n"
+            f"⏱ Проверка каналов: каждые {format_interval(rs.poll_interval_sec)}\n"
             f"Каналов: {active} активных")
 
 
@@ -105,15 +108,34 @@ def main_keyboard(rs) -> InlineKeyboardMarkup:
     ])
 
 
-def interval_text(rs) -> str:
-    return f"⏱ Как часто проверять каналы\nСейчас: каждые {rs.poll_interval_sec // 60} мин"
+INTERVAL_PROMPT = ("Пришлите интервал: число минут (например 500) или с единицей: 90с, 30м, 2ч. "
+                   "От 1 мин до 24 ч. /cancel — отмена")
+CHECK_TIMEOUT_SEC = 120
+
+
+def last_poll_line(listener) -> str:
+    at = getattr(listener, "last_poll_at", None)
+    if not isinstance(at, datetime):
+        return "Последняя проверка: ещё не было"
+    n = getattr(listener, "last_poll_new", 0)
+    return f"Последняя проверка: {at.astimezone(timezone.utc):%H:%M} UTC ({n} новых)"
+
+
+def interval_text(rs, listener=None) -> str:
+    text = f"⏱ Как часто проверять каналы\nСейчас: каждые {format_interval(rs.poll_interval_sec)}"
+    if listener is not None:
+        text += "\n" + last_poll_line(listener)
+    return text
 
 
 def interval_keyboard(rs) -> InlineKeyboardMarkup:
-    btns = [_btn(("✅ " if v == rs.poll_interval_sec else "") + f"{v // 60} мин", f"pi:{v}")
+    btns = [_btn(("✅ " if v == rs.poll_interval_sec else "") + format_interval(v), f"pi:{v}")
             for v in POLL_INTERVALS]
     return InlineKeyboardMarkup(inline_keyboard=[
-        btns[:4], btns[4:], [_btn("⬅️ Назад", "m:main")]])
+        btns[:4], btns[4:],
+        [_btn("✏️ Своё значение", "pi:custom")],
+        [_btn("🔄 Проверить сейчас", "pi:now")],
+        [_btn("⬅️ Назад", "m:main")]])
 
 
 def channels_text(channels: list[dict]) -> str:
@@ -281,6 +303,7 @@ class MenuHandlers:
         m.register(self.cmd_cancel, Command("cancel"))
         m.register(self.on_channel_input, StateFilter(MenuStates.waiting_channel))
         m.register(self.on_model_input, StateFilter(MenuStates.waiting_model))
+        m.register(self.on_interval_input, StateFilter(MenuStates.waiting_interval))
         m.register(self.on_upload_input, StateFilter(MenuStates.waiting_upload))
         m.register(self.on_add_skills_input, StateFilter(MenuStates.waiting_add_skills))
         m.register(self.on_remove_skills_input, StateFilter(MenuStates.waiting_remove_skills))
@@ -408,6 +431,23 @@ class MenuHandlers:
         await message.answer(f"Модель изменена: {rs.openrouter_model}", parse_mode=None)
         await self._send_main(message)
 
+    async def on_interval_input(self, message: Message, state: FSMContext | None = None) -> None:
+        rs = self.runtime_settings
+        if rs is None:
+            await self._clear(state)
+            await message.answer(UNAVAILABLE, parse_mode=None)
+            return
+        try:
+            sec = parse_interval(message.text or "")
+            await rs.set("poll_interval_sec", sec)
+        except ValueError as e:
+            await message.answer(f"{e}\nПопробуйте ещё раз или /cancel", parse_mode=None)
+            return
+        await self._clear(state)
+        await message.answer(f"✅ Проверка каналов: каждые {format_interval(rs.poll_interval_sec)}", parse_mode=None)
+        await message.answer(interval_text(rs, self.listener), reply_markup=interval_keyboard(rs),
+                             parse_mode="HTML")
+
     async def on_upload_input(self, message: Message, state: FSMContext | None = None) -> None:
         ps = self.profile_service
         if ps is None:
@@ -495,7 +535,7 @@ class MenuHandlers:
             elif kind == "pf":
                 await self._on_profile(cb, state, action, arg)
             elif kind == "pi":
-                await self._on_interval(cb, action, rs)
+                await self._on_interval(cb, state, action, rs)
             else:
                 await self._on_threshold(cb, action, arg, rs)
         except Exception:  # noqa: BLE001 - a menu press must never crash the dispatcher
@@ -534,7 +574,7 @@ class MenuHandlers:
                 return
             await self._show_profile(cb)
         elif action == "pi":
-            await self._edit(cb, interval_text(rs), interval_keyboard(rs))
+            await self._edit(cb, interval_text(rs, self.listener), interval_keyboard(rs))
         elif action == "md":
             if state is not None:
                 await state.set_state(MenuStates.waiting_model)
@@ -617,9 +657,39 @@ class MenuHandlers:
         await self._show_channels(cb)
         await cb.answer()
 
-    async def _on_interval(self, cb: CallbackQuery, action: str, rs) -> None:
+    async def _check_now(self, cb: CallbackQuery, rs) -> None:
+        lst = self.listener
+        if lst is None:
+            await cb.answer(UNAVAILABLE, show_alert=True)
+            return
+        done = lst.request_poll_now()
+        if done is None:
+            await cb.answer("Проверка уже идёт", show_alert=True)
+            return
+        await cb.answer("Проверяю каналы…")
+        try:
+            await asyncio.wait_for(done.wait(), timeout=CHECK_TIMEOUT_SEC)
+        except asyncio.TimeoutError:
+            if cb.message is not None:
+                await cb.message.answer("Проверка ещё идёт, результат появится позже", parse_mode=None)
+            return
+        if cb.message is not None:
+            await cb.message.answer(f"Проверено: {lst.last_poll_new} новых постов", parse_mode=None)
+        await self._edit(cb, interval_text(rs, lst), interval_keyboard(rs))
+
+    async def _on_interval(self, cb: CallbackQuery, state, action: str, rs) -> None:
         if rs is None:
             await cb.answer(UNAVAILABLE, show_alert=True)
+            return
+        if action == "custom":
+            if state is not None:
+                await state.set_state(MenuStates.waiting_interval)
+            await self._edit(cb, INTERVAL_PROMPT, InlineKeyboardMarkup(inline_keyboard=[[_btn("⬅️ Назад", "m:pi")]]),
+                             html_mode=False)
+            await cb.answer()
+            return
+        if action == "now":
+            await self._check_now(cb, rs)
             return
         value = to_int(action)
         if value not in POLL_INTERVALS:
@@ -630,7 +700,7 @@ class MenuHandlers:
         except ValueError as e:
             await cb.answer(str(e)[:200], show_alert=True)
             return
-        await self._edit(cb, interval_text(rs), interval_keyboard(rs))
+        await self._edit(cb, interval_text(rs, self.listener), interval_keyboard(rs))
         await cb.answer()
 
     async def _on_threshold(self, cb: CallbackQuery, key: str, arg: str | None, rs) -> None:

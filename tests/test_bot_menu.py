@@ -73,7 +73,7 @@ def test_main_menu_shows_interval_and_button():
 
 def test_interval_keyboard_marks_current():
     kb = interval_keyboard(rs_fake(poll_interval_sec=300))
-    assert texts(kb)[:7] == ["1 мин", "2 мин", "✅ 5 мин", "10 мин", "15 мин", "30 мин", "60 мин"]
+    assert texts(kb)[:7] == ["1 мин", "2 мин", "✅ 5 мин", "10 мин", "15 мин", "30 мин", "1 ч"]
     assert "⬅️ Назад" in texts(kb) and "pi:300" in datas(kb) and "pi:3600" in datas(kb)
     assert all(len(d.encode()) < 64 for d in datas(kb))
 
@@ -279,3 +279,70 @@ def test_router_wiring_has_owner_middleware():
     h = BotHandlers(settings, MagicMock(), None, {}, runtime_settings=rs_fake(), listener=make_listener())
     assert h.menu.runtime_settings is not None
     assert h.router.message.outer_middleware and h.router.callback_query.outer_middleware
+
+
+# ---------------------------------------------------------------- custom interval / check now
+
+from datetime import datetime, timezone  # noqa: E402
+import asyncio  # noqa: E402
+
+from src.bot.menu import interval_text  # noqa: E402
+
+
+def test_interval_keyboard_custom_and_now_buttons():
+    kb = interval_keyboard(rs_fake(poll_interval_sec=500 * 60))
+    assert "✏️ Своё значение" in texts(kb) and "🔄 Проверить сейчас" in texts(kb)
+    assert "pi:custom" in datas(kb) and "pi:now" in datas(kb)
+    assert not any(t.startswith("✅") for t in texts(kb))  # custom value: no preset is marked
+
+
+def test_interval_text_formats_and_last_poll():
+    rs = rs_fake(poll_interval_sec=500 * 60)
+    assert "каждые 8 ч 20 мин" in interval_text(rs)
+    lst = SimpleNamespace(last_poll_at=datetime(2026, 10, 1, 14, 5, tzinfo=timezone.utc), last_poll_new=3)
+    assert "Последняя проверка: 14:05 UTC (3 новых)" in interval_text(rs, lst)
+    assert "каждые 90 с" in main_text(rs_fake(poll_interval_sec=90), CHS)
+
+
+async def test_custom_interval_flow():
+    rs = rs_fake()
+    menu = make_menu(rs, make_listener())
+    st = FakeState()
+    await menu.on_callback(make_cb("pi:custom"), st)
+    assert st.state == MenuStates.waiting_interval
+    bad = make_msg("abc")
+    await menu.on_interval_input(bad, st)
+    rs.set.assert_not_awaited()
+    assert st.state == MenuStates.waiting_interval
+    msg = make_msg("500")
+    rs.set.side_effect = lambda k, v: setattr(rs, k, v)
+    await menu.on_interval_input(msg, st)
+    rs.set.assert_awaited_once_with("poll_interval_sec", 30000)
+    assert st.state is None
+    assert "каждые 8 ч 20 мин" in msg.answer.await_args_list[0].args[0]
+    assert msg.answer.await_count == 2
+
+
+async def test_check_now_triggers_poll_and_reports():
+    rs = rs_fake()
+    lst = make_listener()
+    done = asyncio.Event()
+    done.set()
+    lst.request_poll_now = MagicMock(return_value=done)
+    lst.last_poll_new = 4
+    lst.last_poll_at = None
+    menu = make_menu(rs, lst)
+    cb = make_cb("pi:now")
+    cb.message.answer = AsyncMock()
+    await menu.on_callback(cb, FakeState())
+    cb.answer.assert_awaited_with("Проверяю каналы…")
+    cb.message.answer.assert_awaited_with("Проверено: 4 новых постов", parse_mode=None)
+    rs.set.assert_not_awaited()
+
+
+async def test_check_now_when_already_running():
+    lst = make_listener()
+    lst.request_poll_now = MagicMock(return_value=None)
+    cb = make_cb("pi:now")
+    await make_menu(rs_fake(), lst).on_callback(cb, FakeState())
+    assert "уже идёт" in cb.answer.await_args.args[0]

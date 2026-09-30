@@ -408,7 +408,7 @@ Everything below is done from your notification bot (owner only); no restart is 
 - **Thresholds**: −5 / −1 / +1 / +5 for the notification threshold and the high-fit threshold (0-100, the notification threshold cannot be above the high-fit one).
 - **Paid contacts**: toggle whether jobs with a paid contact are shown.
 - **Pause**: while paused, accepted jobs are held; after "Resume" the backlog is sent immediately.
-- **Check interval** (⏱): how often channels are polled: 1, 2, 5, 10, 15, 30 or 60 min; applies immediately (the current wait is cut short). `poll_interval_sec` in `config.ini` is only the default.
+- **Check interval** (⏱): how often channels are polled: presets (1, 2, 5, 10, 15, 30 min, 1 h) or "✏️ Custom value" (any interval from 1 min to 24 h: `500` = minutes, or `90s`, `30m`, `2h`, `1.5h`); applies immediately (the current wait is cut short). "🔄 Check now" polls the channels right away without changing the interval and reports how many new posts were found; the screen also shows the time of the last check (UTC). `poll_interval_sec` in `config.ini` is only the default.
 - **Model**: send a new OpenRouter model id, e.g. `google/gemini-2.5-flash-lite` (list: https://openrouter.ai/models); an invalid value is rejected with a message.
 
 Where settings live: after the first change from the bot the value is stored in the database and **overrides** `.env` (`NOTIFY_SCORE`, `HIGH_FIT_SCORE`, `SHOW_PAID_CONTACT`, `OPENROUTER_MODEL`). These `.env` values and `config/channels.yaml` are only initial defaults. `channels.yaml` seeds a channel only the first time it appears; a channel deleted from the bot is not re-added from the file.

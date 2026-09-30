@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from datetime import datetime, timezone
 
 from telethon import errors, events
 
@@ -64,6 +65,10 @@ class ChannelListener:
         self.poll_interval = poll_interval_sec
         self._wake = asyncio.Event()  # set by set_poll_interval to cut the current wait short
         self.retry_interval = retry_interval_sec
+        self.last_poll_at: datetime | None = None  # UTC, set after each finished poll
+        self.last_poll_new: int = 0
+        self._polling = False
+        self._poll_done = asyncio.Event()  # set (and replaced) when the next poll finishes
         self.refs: list[ChannelRef] = []
         self._enabled: set[int] = set()
         self._click: dict[int, bool] = {}
@@ -304,12 +309,34 @@ class ChannelListener:
         self.poll_interval = int(sec)
         self._wake.set()
 
+    def request_poll_now(self) -> asyncio.Event | None:
+        """Poll right away without touching the interval. Returns an event that is set when the
+        poll finishes, or None if a poll is already running (nothing is triggered then)."""
+        if self._polling:
+            return None
+        done = self._poll_done
+        self._wake.set()
+        return done
+
     async def _wait_next_poll(self) -> None:
-        self._wake.clear()
         try:
             await asyncio.wait_for(self._wake.wait(), timeout=self.poll_interval)
         except asyncio.TimeoutError:
             pass
+        finally:
+            self._wake.clear()
+
+    async def _poll_tracked(self) -> int:
+        self._polling = True
+        try:
+            n = await self.poll_once()
+        finally:
+            self._polling = False
+        self.last_poll_at = datetime.now(timezone.utc)
+        self.last_poll_new = n
+        done, self._poll_done = self._poll_done, asyncio.Event()
+        done.set()
+        return n
 
     async def run(self) -> None:
         await self.setup()
@@ -320,7 +347,7 @@ class ChannelListener:
         loop = asyncio.get_running_loop()
         next_retry = loop.time() + self.retry_interval
         while True:
-            n = await self.poll_once()
+            n = await self._poll_tracked()
             if n:
                 log.info("poll: %s new posts", n)
             if loop.time() >= next_retry:

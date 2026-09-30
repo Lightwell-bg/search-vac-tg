@@ -56,3 +56,48 @@ async def test_run_loop_polls_again_after_change():
     except asyncio.CancelledError:
         pass
     assert polls == [3600, 60]
+
+
+async def test_request_poll_now_polls_immediately_keeping_interval():
+    lst = make_listener(3600)
+    polls = []
+
+    async def poll_once():
+        polls.append(1)
+        return 2
+
+    lst.poll_once = poll_once
+    task = asyncio.create_task(lst.run_loop())
+    await asyncio.sleep(0.01)
+    assert polls == [1] and lst.last_poll_new == 2 and lst.last_poll_at is not None
+    done = lst.request_poll_now()
+    assert done is not None
+    await asyncio.wait_for(done.wait(), timeout=1)
+    assert len(polls) == 2 and lst.poll_interval == 3600
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+async def test_request_poll_now_refused_while_polling():
+    lst = make_listener(3600)
+    gate = asyncio.Event()
+
+    async def poll_once():
+        await gate.wait()
+        return 0
+
+    lst.poll_once = poll_once
+    task = asyncio.create_task(lst.run_loop())
+    await asyncio.sleep(0.01)
+    assert lst.request_poll_now() is None
+    gate.set()
+    await asyncio.sleep(0.01)
+    assert lst.request_poll_now() is not None
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass

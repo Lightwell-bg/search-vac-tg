@@ -50,7 +50,7 @@ async def test_invalid_stored_value_ignored(repo):
     ("notify_score", 81),  # above high_fit_score=80
     ("high_fit_score", 60),  # below notify_score=65
     ("show_paid_contact", "yes"), ("notifications_paused", 1),
-    ("poll_interval_sec", 45), ("poll_interval_sec", True), ("poll_interval_sec", "x"),
+    ("poll_interval_sec", 45), ("poll_interval_sec", 86401), ("poll_interval_sec", True), ("poll_interval_sec", "x"),
     ("poll_interval_sec", 0),
     ("openrouter_model", ""), ("openrouter_model", "   "), ("openrouter_model", "nomodel"),
     ("openrouter_model", "a/b c"), ("openrouter_model", "a/" + "b" * 100), ("unknown", 1),
@@ -79,7 +79,9 @@ async def test_poll_interval_persisted_and_overrides_env(repo):
     await rs.set("poll_interval_sec", 600)
     again = await RuntimeSettings.load(repo, env(poll_interval_sec=300))
     assert again.poll_interval_sec == 600
-    await repo.set_setting("poll_interval_sec", 45)  # not an allowed value: ignored
+    await rs.set("poll_interval_sec", 30000)  # any value in 60..86400 is accepted
+    assert (await RuntimeSettings.load(repo, env(poll_interval_sec=300))).poll_interval_sec == 30000
+    await repo.set_setting("poll_interval_sec", 45)  # out of range: ignored
     assert (await RuntimeSettings.load(repo, env(poll_interval_sec=300))).poll_interval_sec == 300
 
 

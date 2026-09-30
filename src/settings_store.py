@@ -22,7 +22,37 @@ MODEL_MAX_LEN = 100
 INT_KEYS = ("notify_score", "high_fit_score")
 BOOL_KEYS = ("show_paid_contact", "notifications_paused")
 ALL_KEYS = INT_KEYS + BOOL_KEYS + ("openrouter_model", "poll_interval_sec")
-POLL_INTERVALS = (60, 120, 300, 600, 900, 1800, 3600)
+POLL_INTERVALS = (60, 120, 300, 600, 900, 1800, 3600)  # preset buttons only
+MIN_POLL_SEC = 60
+MAX_POLL_SEC = 86400
+POLL_RANGE_ERROR = "Интервал должен быть от 1 минуты до 24 часов (60..86400 секунд)"
+INTERVAL_EXAMPLES = "Примеры: 500 (минут), 30м, 90с, 2ч, 1.5ч"
+_UNITS = {"с": 1, "сек": 1, "секунд": 1, "секунды": 1, "s": 1, "sec": 1,
+          "м": 60, "мин": 60, "минут": 60, "минуты": 60, "m": 60, "min": 60,
+          "ч": 3600, "час": 3600, "часа": 3600, "часов": 3600, "h": 3600, "hr": 3600}
+_INTERVAL_RE = re.compile(r"^(\d+(?:\.\d+)?)([a-zа-яё]*)$")
+
+
+def parse_interval(text: str) -> int:
+    """'500' (minutes), '30м', '90 сек', '2ч', '1.5h' -> seconds. Russian ValueError otherwise."""
+    raw = re.sub(r"\s+", "", str(text or "").lower()).replace(",", ".")
+    m = _INTERVAL_RE.match(raw)
+    if not m or (m.group(2) and m.group(2) not in _UNITS):
+        raise ValueError(f"Не удалось разобрать интервал «{str(text or '').strip()[:40]}». {INTERVAL_EXAMPLES}")
+    sec = round(float(m.group(1)) * _UNITS.get(m.group(2), 60))
+    if not MIN_POLL_SEC <= sec <= MAX_POLL_SEC:
+        raise ValueError(POLL_RANGE_ERROR)
+    return sec
+
+
+def format_interval(sec: int) -> str:
+    """60 -> '1 мин', 500*60 -> '8 ч 20 мин', 90 -> '90 с'."""
+    sec = int(sec)
+    if sec < 3600:
+        return f"{sec // 60} мин" if sec % 60 == 0 else f"{sec} с"
+    h, rest = divmod(sec, 3600)
+    m, s = divmod(rest, 60)
+    return " ".join([f"{h} ч"] + ([f"{m} мин"] if m else []) + ([f"{s} с"] if s else []))
 
 
 def _valid_score(key: str, value: Any) -> int:
@@ -67,7 +97,7 @@ class RuntimeSettings:
             ok = (isinstance(v, bool) if key in BOOL_KEYS
                   else isinstance(v, str) if key == "openrouter_model"
                   else isinstance(v, int) and not isinstance(v, bool))
-            if ok and key == "poll_interval_sec" and v not in POLL_INTERVALS:
+            if ok and key == "poll_interval_sec" and not MIN_POLL_SEC <= v <= MAX_POLL_SEC:
                 ok = False
             if ok:
                 values[key] = v
@@ -93,9 +123,8 @@ class RuntimeSettings:
         if key == "poll_interval_sec":
             if isinstance(value, str) and re.fullmatch(r"\s*\d{1,5}\s*", value):
                 value = int(value)
-            if isinstance(value, bool) or not isinstance(value, int) or value not in POLL_INTERVALS:
-                raise ValueError("Период проверки должен быть одним из: "
-                                 + ", ".join(f"{v // 60} мин" for v in POLL_INTERVALS))
+            if isinstance(value, bool) or not isinstance(value, int) or not MIN_POLL_SEC <= value <= MAX_POLL_SEC:
+                raise ValueError(POLL_RANGE_ERROR)
             return value
         if key in BOOL_KEYS:
             if not isinstance(value, bool):

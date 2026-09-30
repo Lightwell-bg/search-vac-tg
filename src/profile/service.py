@@ -31,6 +31,7 @@ EXTRACT_TIMEOUT_SEC = 60
 TIMEOUT_ERROR = "Не удалось обработать файл за 60 с"
 CHILD_MEMORY_LIMIT = 1024 * 1024 * 1024
 IDS_FILE = ".ids.json"
+CACHE_VERSION = 2  # bump when the uploads extraction logic changes: forces a rebuild on next startup
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".md", ".txt"}
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -160,6 +161,7 @@ def build_uploads_profile(files: list[Path], fingerprint: list | None = None) ->
         "has_cv": any(CV_NAME_RE.search(d.name) for d in docs),
         "sources": [d.name for d in docs],
         "fingerprint": fingerprint if fingerprint is not None else [],
+        "cache_version": CACHE_VERSION,
     }
 
 
@@ -242,6 +244,8 @@ class ProfileService:
         fp = self._fingerprint()
         if not cache:
             return (not fp and not self.uploads_cache.exists()), {}
+        if cache.get("cache_version") != CACHE_VERSION:
+            return False, cache
         return cache.get("fingerprint") == fp, cache
 
     def _uploads_derived(self) -> dict:

@@ -377,6 +377,55 @@ def parse_projects_md(text: str, source: str) -> list[dict]:
     return projects
 
 
+_SKIP_HEADING_RE = re.compile(
+    r"контакт|обо мне|о себе|навык|skills|contacts?|\babout\b|опыт|образован|оглавлен|содержан|"
+    r"table of contents|\bcontents\b|резюме|education|experience|портфолио$|^portfolio$", re.I)
+_EMOJI_RE = re.compile("[\U00010000-\U0010ffff☀-➿⬀-⯿️‍]")
+_HEADING_NUM_RE = re.compile(r"^[\W_]*(?:\d+(?:\.\d+)*[.)]?\s+)?")
+_STACK_FIELD_RE = re.compile(r"(?im)^[\s>*_-]*(?:стек|stack)[*_\s]*:")
+_MD_LINK_RE = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
+MIN_SECTION_CHARS = 80
+
+
+def _clean_heading(h: str) -> str:
+    h = _EMOJI_RE.sub("", h)
+    h = _HEADING_NUM_RE.sub("", h.strip())
+    return re.sub(r"[*_`]+", "", h).strip()[:80].strip()
+
+
+def _plain_text(body: str) -> str:
+    t = _MD_LINK_RE.sub(r"\1", body)
+    t = re.sub(r"(?m)^[\s>#*_|-]+", "", t)
+    t = re.sub(r"[*_`|]+", " ", t)
+    return re.sub(r"\s+", " ", _EMOJI_RE.sub("", t)).strip()
+
+
+def parse_sections(text: str, source: str) -> list[dict]:
+    """Projects from "##"/"###" sections that have no "Стек:" line: stack = taxonomy hits in the text."""
+    projects: list[dict] = []
+    for block in re.split(r"(?m)^(?=#{2,3} )", text):
+        m = re.match(r"#{2,3} (.*)", block)
+        if not m:
+            continue
+        body = block[m.end():]
+        if _STACK_FIELD_RE.search(body):
+            continue            # handled by parse_projects_md
+        name = _clean_heading(m.group(1))
+        if not name or _SKIP_HEADING_RE.search(name):
+            continue
+        plain = _plain_text(body)
+        if len(plain) < MIN_SECTION_CHARS:
+            continue
+        hits = find_technologies(name + " " + plain)
+        if not hits:
+            continue
+        stack = sorted(hits, key=lambda t: (-hits[t], t))
+        types = derive_from_technologies(set(stack))["types"]
+        projects.append({"name": name, "summary": plain[:300], "type": types[0] if types else "",
+                         "stack": stack, "source": source})
+    return projects
+
+
 _GENERIC_LINE_RE = re.compile(r"^[\W_]*(?:(?:kwork|portfolio|case|development|кейс|портфолио|ai)[\W_]*)+$", re.I)
 
 
@@ -411,8 +460,11 @@ def extract_projects(docs: list[Document]) -> list[dict]:
                 p = parse_portfolio_pdf(d)
                 if p:
                     add(p)
-        elif d.path.suffix.lower() == ".md":
-            for p in parse_projects_md(d.text, str(d.path)):
+        elif d.path.suffix.lower() in (".md", ".txt"):
+            if d.path.suffix.lower() == ".md":
+                for p in parse_projects_md(d.text, str(d.path)):
+                    add(p)
+            for p in parse_sections(d.text, d.name):
                 add(p)
     return projects
 

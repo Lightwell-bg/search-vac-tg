@@ -52,17 +52,28 @@ def _join(items, limit: int) -> str:
     return ", ".join(str(i) for i in (items or [])[:limit])
 
 
-def compact_profile(profile: dict, max_chars: int = 900) -> str:
-    """Short text profile (a few hundred chars): what JEV and OpenRouter get instead of the CV."""
-    parts = []
-    if profile.get("summary"):
-        parts.append(str(profile["summary"]))
-    parts.append("Stack: " + _join(profile.get("technologies"), 25))
-    parts.append("Does: " + _join(profile.get("services"), 10))
-    parts.append("Best fit: " + _join(profile.get("strong_matches"), 10))
-    if profile.get("acceptable_matches"):
-        parts.append("Also OK: " + _join(profile.get("acceptable_matches"), 8))
-    if profile.get("reject_categories"):
+def compact_profile(profile: dict, max_chars: int = 1400) -> str:
+    """Short text profile: what JEV and OpenRouter get instead of the CV.
+
+    Built line by line with per-line item limits. Over budget, items are dropped from the END
+    of the Stack line (never mid-item); "Not interested" is never dropped.
+    """
+    stack = [str(i) for i in (profile.get("technologies") or [])[:30]]
+
+    def build(n_stack: int) -> str:
+        parts = []
+        if profile.get("summary"):
+            parts.append(str(profile["summary"]))
+        parts.append("Stack: " + ", ".join(stack[:n_stack]))
+        parts.append("Does: " + _join(profile.get("services"), 10))
+        parts.append("Best fit: " + _join(profile.get("strong_matches"), 10))
         parts.append("Not interested: " + _join(profile.get("reject_categories"), 10))
-    text = "\n".join(p for p in parts if not p.endswith(": "))
-    return text[:max_chars]
+        parts.append("Also OK: " + _join(profile.get("acceptable_matches"), 8))
+        return "\n".join(p for p in parts if not p.endswith(": "))
+
+    n = len(stack)
+    text = build(n)
+    while len(text) > max_chars and n > 0:
+        n -= 1
+        text = build(n)
+    return text
