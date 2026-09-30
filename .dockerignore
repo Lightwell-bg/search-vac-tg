@@ -1,0 +1,13 @@
+.git
+.venv
+data
+tests
+docs
+.env
+__pycache__
+*.pyc
+materials/private/
+.claude/
+*.session
+*.session-journal
+data/

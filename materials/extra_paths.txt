@@ -1,0 +1,15 @@
+# Дополнительные файлы/папки для профиля (по одному пути на строку).
+# Это локальные пути Windows; на сервере их нет, и они просто пропускаются.
+D:\1PythonProjects\20251105-ai-asist-deepseek\Portfolio_AI-Assistant-DeepSeek.pdf
+D:\1PythonProjects\20251105-ai-asist-deepseek\Portfolio_AI_Assistant_DeepSeek.pdf
+D:\1PythonProjects\20251125BotForGroup\Portfolio_Telegram_Group_Admin_Bot.pdf
+D:\1PythonProjects\20260404MedVopros\Portfolio_MedVopros.pdf
+D:\1PythonProjects\20260404MedVopros\Portfolio_VetVopros.pdf
+D:\1PythonProjects\20260404MedVopros\Portfolio_VetVopros1.pdf
+D:\1PythonProjects\20260727TestHH1\Portfolio_Ochistka_tovarnogo_kataloga_CSV.pdf
+D:\1PythonProjects\20260727TestHH1\Portfolio_Ozon_Seller_Automation.pdf
+D:\1PythonProjects\20260729EmailVal\Portfolio_Email_Validator_AcyMailing.pdf
+D:\1PythonProjects\20260807TranslatePress\Portfolio_WP_Multilang_Press.pdf
+D:\1PythonProjects\20260807TranslatePress\Portfolio_WP_Multilang_Press_.pdf
+D:\1PythonProjects\20260807TranslatePress\Portfolio_WP_Multilang_Press_EN.pdf
+D:\1PythonProjects\20260824KworkCasino\Portfolio_GOMEDA_BET_350.pdf

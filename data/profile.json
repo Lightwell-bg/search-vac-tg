@@ -1,0 +1,718 @@
+{
+  "provisional": false,
+  "summary": "Developer (Telegram bots, AI/LLM integration, RAG, AI agents). Main stack: Python, Docker, Telegram Bot API, Ubuntu VPS, WordPress, OpenAI API, SQLite, HTML/CSS.",
+  "skills": [
+    "Telegram bots",
+    "AI assistants",
+    "LLM integrations",
+    "RAG",
+    "AI agents",
+    "MCP",
+    "Python web backend",
+    "WordPress",
+    "parsing/scraping",
+    "Google Sheets integrations",
+    "CRM integrations",
+    "API integrations",
+    "webhooks",
+    "deployment",
+    "social media APIs",
+    "voice AI",
+    "Python",
+    "web frontend as part of a project",
+    "AI automation",
+    "business process automation"
+  ],
+  "technologies": [
+    "Python",
+    "Docker",
+    "Telegram Bot API",
+    "Ubuntu VPS",
+    "WordPress",
+    "OpenAI API",
+    "SQLite",
+    "HTML/CSS",
+    "aiogram",
+    "Docker Compose",
+    "pytest",
+    "DeepSeek",
+    "RAG",
+    "pgvector",
+    "PostgreSQL",
+    "PHP",
+    "Alembic",
+    "MySQL",
+    "REST API",
+    "FastAPI",
+    "Jinja2",
+    "Flask",
+    "scraping",
+    "JavaScript",
+    "CRM (amoCRM/Bitrix24)",
+    "Redis",
+    "SQLAlchemy",
+    "VK API",
+    "pyTelegramBotAPI",
+    "MCP",
+    "OpenRouter",
+    "Pydantic",
+    "APScheduler",
+    "Anthropic API",
+    "Supabase",
+    "BeautifulSoup",
+    "Google Sheets",
+    "Playwright",
+    "React",
+    "TypeScript",
+    "AI agents",
+    "Caddy",
+    "ElevenLabs",
+    "GigaChat",
+    "HTMX",
+    "Next.js",
+    "Tailwind",
+    "Telethon",
+    "Vite",
+    "systemd",
+    "n8n",
+    "Gemini API",
+    "WooCommerce",
+    "Google Drive"
+  ],
+  "technology_documents": {
+    "Python": 11,
+    "Docker": 9,
+    "Telegram Bot API": 9,
+    "Ubuntu VPS": 8,
+    "WordPress": 6,
+    "OpenAI API": 6,
+    "SQLite": 5,
+    "HTML/CSS": 5,
+    "aiogram": 5,
+    "Docker Compose": 5,
+    "pytest": 5,
+    "DeepSeek": 4,
+    "RAG": 4,
+    "pgvector": 4,
+    "PostgreSQL": 4,
+    "PHP": 4,
+    "Alembic": 4,
+    "MySQL": 4,
+    "REST API": 4,
+    "FastAPI": 3,
+    "Jinja2": 3,
+    "Flask": 2,
+    "scraping": 2,
+    "JavaScript": 2,
+    "CRM (amoCRM/Bitrix24)": 2,
+    "Redis": 2,
+    "SQLAlchemy": 2,
+    "VK API": 2,
+    "pyTelegramBotAPI": 2,
+    "MCP": 1,
+    "OpenRouter": 1,
+    "Pydantic": 1,
+    "APScheduler": 1,
+    "Anthropic API": 1,
+    "Supabase": 1,
+    "BeautifulSoup": 1,
+    "Google Sheets": 1,
+    "Playwright": 1,
+    "React": 1,
+    "TypeScript": 1,
+    "AI agents": 1,
+    "Caddy": 1,
+    "ElevenLabs": 1,
+    "GigaChat": 1,
+    "HTMX": 1,
+    "Next.js": 1,
+    "Tailwind": 1,
+    "Telethon": 1,
+    "Vite": 1,
+    "systemd": 1
+  },
+  "services": [
+    "Telegram bot development",
+    "AI assistants and LLM integrations",
+    "RAG",
+    "AI agents",
+    "Python web backends",
+    "WordPress/WooCommerce customization",
+    "parsers and scrapers",
+    "Google Sheets integrations",
+    "CRM integrations",
+    "API and webhook integrations",
+    "deployment on Ubuntu VPS with Docker",
+    "n8n / workflow automation",
+    "AI assistants and chatbots on LLM APIs",
+    "RAG / AI agents",
+    "CRM and Google Sheets integrations"
+  ],
+  "project_types": [
+    "telegram_bot",
+    "ai_assistant",
+    "web_backend",
+    "wordpress",
+    "parser",
+    "automation"
+  ],
+  "portfolio_projects": [
+    {
+      "name": "20251105-ai-asist-deepseek",
+      "summary": "AI-ассистент компании «Информация о Болгарии» для Telegram, сайта WordPress и ВКонтакте",
+      "type": "ai_assistant",
+      "stack": [
+        "Python",
+        "DeepSeek/OpenRouter",
+        "SQLite",
+        "Telegram",
+        "VK API",
+        "WordPress-плагин (PHP, vanilla JS)",
+        "systemd"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20251125BotForGroup",
+      "summary": "Telegram-бот модератор группы с DeepSeek",
+      "type": "telegram_bot",
+      "stack": [
+        "Python",
+        "pyTelegramBotAPI",
+        "DeepSeek",
+        "SQLite",
+        "config.ini/.env"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260404MedVopros",
+      "summary": "MedVopros и VetVopros: справочные Telegram AI-боты (медицина и ветеринария) с RAG",
+      "type": "telegram_bot / ai_assistant",
+      "stack": [
+        "Python",
+        "aiogram 3",
+        "FastAPI",
+        "Jinja2",
+        "PostgreSQL + pgvector",
+        "Alembic",
+        "OpenAI API",
+        "Docker Compose"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260609KworkCons",
+      "summary": "TG Sales AI Bot: внутренний AI-консультант отдела продаж",
+      "type": "telegram_bot / ai_assistant",
+      "stack": [
+        "Python",
+        "aiogram 3",
+        "asyncio",
+        "Anthropic Claude",
+        "Google Sheets API",
+        "SQLite (aiosqlite)",
+        "APScheduler",
+        "Docker"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260616-Rent",
+      "summary": "Rental Reviews BG: площадка проверенных отзывов об аренде жилья в Болгарии",
+      "type": "web_app + telegram_bot",
+      "stack": [
+        "Next.js",
+        "TypeScript",
+        "Tailwind CSS",
+        "Supabase (PostgreSQL, Storage, RLS)",
+        "Python 3.12",
+        "aiogram 3",
+        "Docker",
+        "Vercel/Cloudflare Pages"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260706SendUser",
+      "summary": "админка массовых рассылок для подписчиков двух Telegram-ботов",
+      "type": "web_app / automation",
+      "stack": [
+        "Python 3.12",
+        "FastAPI",
+        "Jinja2",
+        "HTMX",
+        "SQLite"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260727TestHH1",
+      "summary": "тестовые задания на вакансию: очистка товарного каталога CSV и интеграция с Ozon Seller",
+      "type": "automation",
+      "stack": [
+        "Python 3.12",
+        "requests",
+        "python-dotenv",
+        "pytest",
+        "CSV (utf-8-sig)"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260729EmailVal",
+      "summary": "валидатор email-адресов из базы AcyMailing",
+      "type": "automation",
+      "stack": [
+        "Python",
+        "dnspython",
+        "chardet",
+        "tqdm",
+        "python-dotenv",
+        "pytest"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260729PlaginWP",
+      "summary": "InsurWP: калькулятор медицинской страховки для WordPress",
+      "type": "wordpress_plugin",
+      "stack": [
+        "PHP",
+        "WordPress (shortcode, admin)",
+        "JSON-тарифы",
+        "JS",
+        "composer; есть Telegram Mini App (npm)"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260807TranslatePress",
+      "summary": "WP Multilang Press (плагин мультиязычности по модели TranslatePress) и AcyMailing Cron Sender",
+      "type": "wordpress_plugin",
+      "stack": [
+        "PHP",
+        "WordPress",
+        "composer",
+        "DOM-парсинг HTML",
+        "OpenAI API (ИИ-перевод)",
+        "MySQL",
+        "PHPMailer",
+        "системный cron"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260824KworkCasino",
+      "summary": "GOMEDA BET 350: Telegram-бот-витрина бонусов на турецком с трекингом источников",
+      "type": "telegram_bot",
+      "stack": [
+        "Python 3.11",
+        "aiogram 3",
+        "SQLite (aiosqlite, WAL)",
+        "pydantic-settings",
+        "Docker Compose"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260827CommonBuy",
+      "summary": "Group Buys: бот совместных закупок в Telegram-группе",
+      "type": "telegram_bot",
+      "stack": [
+        "Python",
+        "aiogram",
+        "SQLite",
+        "миграции",
+        "Docker (по разделам README)"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260905TestHHgames",
+      "summary": "gamesinsp: тестовое задание «AI Automation Engineer»",
+      "type": "parser / automation",
+      "stack": [
+        "Python",
+        "APScheduler",
+        "PostgreSQL",
+        "парсинг Metacritic",
+        "LLM-резюме отзывов",
+        "разбор YouTube-обзора",
+        "веб-интерфейс"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260905kwork_assist-main",
+      "summary": "Kwork AI Assistant и Upwork AI Assistant: мониторинг бирж фриланса и генерация откликов",
+      "type": "automation / ai_assistant",
+      "stack": [
+        "Python",
+        "FastAPI",
+        "aiogram 3",
+        "Playwright",
+        "BeautifulSoup/lxml",
+        "GigaChat API",
+        "APScheduler",
+        "SQLAlchemy",
+        "aiosqlite",
+        "Docker",
+        "pytest"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260910news-post",
+      "summary": "BG News Monitor: отбор важных новостей Болгарии для русскоязычной аудитории",
+      "type": "parser / ai_assistant",
+      "stack": [
+        "Python",
+        "планировщик",
+        "адаптеры парсинга сайтов",
+        "OpenRouter (LLM)",
+        "Pydantic",
+        "Telegram"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260915CalcEU",
+      "summary": "BGINFO Schengen Calculator: калькулятор правила 90/180",
+      "type": "wordpress_plugin",
+      "stack": [
+        "PHP",
+        "WordPress (shortcode)",
+        "JavaScript (расчёт в браузере)"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260917bginfodocs",
+      "summary": "DocPilot: локальный Document Engine и бенчмарк Vision-моделей для административных документов",
+      "type": "ai_assistant / automation (CLI)",
+      "stack": [
+        "Python",
+        "PyMuPDF",
+        "Pillow",
+        "Pydantic (strict)",
+        "Vision LLM"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260919LangHelper",
+      "summary": "Vira: ситуативный тренажёр иностранных языков в Telegram (голос)",
+      "type": "telegram_bot / ai_assistant",
+      "stack": [
+        "Python",
+        "Telegram",
+        "Supabase (БД и хранилище аудио)",
+        "OpenRouter",
+        "ElevenLabs",
+        "Redis",
+        "платежи",
+        "Docker",
+        "Caddy",
+        "VPS Ubuntu"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "20260924upwork",
+      "summary": "upwork-scout: локальный триаж вакансий Upwork",
+      "type": "parser / automation",
+      "stack": [
+        "Python 3.11+",
+        "Playwright (Chrome)",
+        "BeautifulSoup",
+        "SQLite",
+        "Jinja2",
+        "PyYAML",
+        "Pydantic",
+        "httpx",
+        "OpenRouter",
+        "pytest"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "bginfoMiniApp",
+      "summary": "Telegram Mini App, навигатор по разделам сайта bginfo.eu",
+      "type": "web_app",
+      "stack": [
+        "React",
+        "Vite",
+        "TypeScript",
+        "Telegram WebApp API",
+        "react-router-dom",
+        "CSS"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "ai-dev-team",
+      "summary": "локальная инфраструктура команды ИИ-агентов (Lead, Developer, QA, Reviewer, Release)",
+      "type": "automation (мета-инструменты для разработки)",
+      "stack": [
+        "PowerShell",
+        "Claude Code (.claude/agents)",
+        "Codex (.codex)",
+        "Markdown-процессы"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "agents_cc_codex",
+      "summary": "рецепт мультиагентной оркестрации в Claude Code (Opus + Sonnet-сабагенты + Codex-ревьюер + Jev-маршрутизация)",
+      "type": "automation (конфигурация и документация)",
+      "stack": [
+        "Claude Code",
+        "Codex",
+        "Jev (API)",
+        "shell/PowerShell-скрипты"
+      ],
+      "source": "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md"
+    },
+    {
+      "name": "КЕЙС · AI-АВТОМАТИЗАЦИЯ",
+      "summary": "AI-АССИСТЕНТDeepSeek-бот для Telegram, VK и сайта на WordPress Комплексный AI-консультант, который отвечает клиентам в Telegram, VK и на сайте, приоритетно опирается на базу FAQ и передаёт сложные вопросы живому оператору. Python DeepSeek API Telegram Bot API VK API Flask SQLite Docker HTTPS / SSL Ч",
+      "type": "",
+      "stack": [
+        "Python",
+        "Telegram Bot API",
+        "DeepSeek",
+        "Flask",
+        "WordPress",
+        "SQLite",
+        "Docker",
+        "Ubuntu VPS"
+      ],
+      "source": "D:\\1PythonProjects\\20251105-ai-asist-deepseek\\Portfolio_AI-Assistant-DeepSeek.pdf"
+    },
+    {
+      "name": "KWORK PORTFOLIO CASE",
+      "summary": "AI ASSISTANT DEEPSEEK T elegram/VK-бот, веб-чат для WordPress и FAQ-база в одном сервисе поддержки. КАНАЛЫ И ЯДРО TG Telegram-бот с историей диалога VK ВК-бот через Long Poll WP API для виджета на сайте DB FAQ, пользователи и логи Комплексное решение для AI-ассистента на базе DeepSeek API: пользоват",
+      "type": "",
+      "stack": [
+        "Python",
+        "Telegram Bot API",
+        "DeepSeek",
+        "Flask",
+        "WordPress",
+        "SQLite",
+        "Docker",
+        "Ubuntu VPS",
+        "CRM (amoCRM/Bitrix24)",
+        "VK API"
+      ],
+      "source": "D:\\1PythonProjects\\20251105-ai-asist-deepseek\\Portfolio_AI_Assistant_DeepSeek.pdf"
+    },
+    {
+      "name": "AI KWORK",
+      "summary": "CASE PYTHON / TELEGRAM / DEEPSEEK TG GROUP ADMIN BOT AI-модерация вопросов и подсказок в Telegram-группе Бот анализирует сообщения в группе, отличает вопросы от обычной переписки, сохраняет историю и автоматически предлагает пользователю виртуального помощника, когда это уместно. TG Telegram Bot API",
+      "type": "",
+      "stack": [
+        "Python",
+        "pyTelegramBotAPI",
+        "Telegram Bot API",
+        "DeepSeek",
+        "SQLite",
+        "Docker",
+        "Docker Compose",
+        "Ubuntu VPS"
+      ],
+      "source": "D:\\1PythonProjects\\20251125BotForGroup\\Portfolio_Telegram_Group_Admin_Bot.pdf"
+    },
+    {
+      "name": "ПОРТФОЛИО · TELEGRAM AI-БОТ",
+      "summary": "MEDVOPROSМедицинский справочный AI-бот в Telegram Бот с базой медицинских знаний для русскоязычной аудитории за рубежом: отвечает через RAG и LLM, распознаёт тревожные симптомы и работает на лимитах и платных пакетах. Python 3.11 PostgreSQL + pgvector aiogram 3.x SQLAlchemy Alembic LLM API Docker Uv",
+      "type": "",
+      "stack": [
+        "Python",
+        "aiogram",
+        "Telegram Bot API",
+        "RAG",
+        "pgvector",
+        "PostgreSQL",
+        "SQLAlchemy",
+        "Alembic",
+        "Docker",
+        "Ubuntu VPS"
+      ],
+      "source": "D:\\1PythonProjects\\20260404MedVopros\\Portfolio_MedVopros.pdf"
+    },
+    {
+      "name": "Что делает",
+      "summary": "система Запрос проходит через ветеринарные ограничения, поиск по базе знаний и LLM-ответ. При необходимости пользователь выбирает специалиста. Почему удобно заказчику Проект закрывает поддержку пользователей, управление знаниями, безопасность медицинских формулировок и запуск в Docker . 01 Безопасне",
+      "type": "",
+      "stack": [
+        "Python",
+        "aiogram",
+        "Telegram Bot API",
+        "OpenAI API",
+        "RAG",
+        "pgvector",
+        "FastAPI",
+        "Jinja2",
+        "PostgreSQL",
+        "Alembic",
+        "Docker",
+        "Docker Compose"
+      ],
+      "source": "D:\\1PythonProjects\\20260404MedVopros\\Portfolio_VetVopros.pdf"
+    },
+    {
+      "name": "Python 3.12+ pandas re / парсинг pytest CSV / Excel-ready",
+      "summary": "КЕЙС АВТОМАТИЗАЦИИ ДАННЫХ 01 / 03 Очистка товарного каталога CSV Локальный Python-конвейер превращает сырую выгрузку в структурированный каталог, удаляет дубли и объясняет каждое спорное решение в отдельном журнале. 19 → 11строк исходника преобразованы в 11 готовых товарных позиций ЧТО ДЕЛАЕТ СИСТЕМ",
+      "type": "",
+      "stack": [
+        "Python",
+        "scraping",
+        "pytest"
+      ],
+      "source": "D:\\1PythonProjects\\20260727TestHH1\\Portfolio_Ochistka_tovarnogo_kataloga_CSV.pdf"
+    },
+    {
+      "name": "КЕЙС АВТОМАТИЗАЦИИ E-COMMERCE",
+      "summary": "Ozon Seller: товары и остатки под контролем Два Python-скрипта выгружают каталог продавца в Excel-совместимый CSV и формируют утреннюю T elegram-сводку с предупреждением о заканчивающихся товарах. Python 3.12+ Ozon Seller API Telegram Bot API CSV / Excel cron / Task Scheduler Что делает система Соби",
+      "type": "",
+      "stack": [
+        "Python",
+        "Telegram Bot API",
+        "Docker",
+        "Ubuntu VPS",
+        "pytest"
+      ],
+      "source": "D:\\1PythonProjects\\20260727TestHH1\\Portfolio_Ozon_Seller_Automation.pdf"
+    },
+    {
+      "name": "СВОЙ ИНСТРУМЕНТ ВМЕСТО ПЛАТНЫХ СЕРВИСОВ",
+      "summary": "Email-валидатор без оплаты за каждую проверку Python-система для очистки базы AcyMailing: заменяет платные проверки на сайтах, не использует внешние API и сохраняет полный контроль над списком адресов. Python 3.10+ DNS / MX SMTP RCPT TO CSV pytest · 144 теста VPS Повторные прогоны - без тарифа Нет о",
+      "type": "",
+      "stack": [
+        "Python",
+        "Ubuntu VPS",
+        "pytest"
+      ],
+      "source": "D:\\1PythonProjects\\20260729EmailVal\\Portfolio_Email_Validator_AcyMailing.pdf"
+    },
+    {
+      "name": "-  КЕЙС РАЗРАБОТКИ",
+      "summary": "01 / 03 WP Multilang Press мультиязычность без дублей WordPress-плагин, который переводит готовую страницу на сервере, хранит строки отдельно и добавляет AI-подсказки с обязательной ручной проверкой. WordPress 6.4+ PHP 8.1+ MySQL / MariaDB OpenAI API REST API Что делает система Одна запись обслужива",
+      "type": "",
+      "stack": [
+        "OpenAI API",
+        "WordPress",
+        "PHP",
+        "HTML/CSS",
+        "MySQL",
+        "REST API"
+      ],
+      "source": "D:\\1PythonProjects\\20260807TranslatePress\\Portfolio_WP_Multilang_Press.pdf"
+    },
+    {
+      "name": "БОТКИРАЗРА-  КЕЙС 0301 /",
+      "summary": "ssrePganltiluMPW ед бублейезь бстноычязтиульлм окиит стрне, храерверцу на страниовую сит готреводый пер, котолагинPress-пWord ой.оверкчной прной пой руательнс обязказкиI-подсляет Aдобавльно иотде WordPress 6.4+ PHP 8.1+ MySQL / MariaDB OpenAI API REST API Что делает система Одна запись обслуживает в",
+      "type": "",
+      "stack": [
+        "OpenAI API",
+        "WordPress",
+        "PHP",
+        "HTML/CSS",
+        "MySQL",
+        "REST API"
+      ],
+      "source": "D:\\1PythonProjects\\20260807TranslatePress\\Portfolio_WP_Multilang_Press_.pdf"
+    },
+    {
+      "name": "-  DEVELOPMENT CASE",
+      "summary": "01 / 03 WP Multilang Press multilingual content without duplicates A WordPress plugin that translates rendered pages on the server, stores strings separately, and adds AI suggestions with mandatory human review. WordPress 6.4+ PHP 8.1+ MySQL / MariaDB OpenAI API REST API How the system works One pos",
+      "type": "",
+      "stack": [
+        "OpenAI API",
+        "WordPress",
+        "PHP",
+        "JavaScript",
+        "HTML/CSS",
+        "MySQL",
+        "REST API"
+      ],
+      "source": "D:\\1PythonProjects\\20260807TranslatePress\\Portfolio_WP_Multilang_Press_EN.pdf"
+    },
+    {
+      "name": "PORTFOLIO CASE / TELEGRAM AUTOMATION",
+      "summary": "GOMEDA BET 350 Telegram-бот-витрина Турецкоязычный бот с учётом рекламных источников, кликов и полноценным управлением контентом прямо из Telegram. Telegram Bot API Python 3.11+ SQLite / WAL aiogram 3 Docker Compose Что делает система Проводит пользователя от рекламной ссылки к нужному разделу, фикс",
+      "type": "",
+      "stack": [
+        "Python",
+        "aiogram",
+        "Telegram Bot API",
+        "HTML/CSS",
+        "SQLite",
+        "Redis",
+        "Docker",
+        "Docker Compose",
+        "Ubuntu VPS",
+        "CRM (amoCRM/Bitrix24)",
+        "pytest"
+      ],
+      "source": "D:\\1PythonProjects\\20260824KworkCasino\\Portfolio_GOMEDA_BET_350.pdf"
+    }
+  ],
+  "strong_matches": [
+    "Telegram bots",
+    "AI/LLM integration",
+    "RAG",
+    "AI agents",
+    "parsing",
+    "API integration",
+    "Python automation",
+    "n8n automation"
+  ],
+  "acceptable_matches": [
+    "Python web backend",
+    "WordPress/WooCommerce",
+    "Google Sheets automation",
+    "CRM integration",
+    "Docker/VPS deployment",
+    "social media APIs",
+    "speech/voice AI integrations",
+    "FastAPI backend"
+  ],
+  "weak_matches": [
+    "n8n",
+    "Gemini API",
+    "WooCommerce",
+    "Google Drive",
+    "mobile apps",
+    "1C"
+  ],
+  "reject_categories": [
+    "design",
+    "SMM",
+    "copywriting",
+    "video editing",
+    "sales",
+    "recruiting",
+    "accounting",
+    "non-technical tasks"
+  ],
+  "sources": [
+    "D:\\1PythonProjects\\20260930FindVacTGgroupe\\search-vac-tg\\materials\\projects_from_disk.md",
+    "D:\\1PythonProjects\\20251105-ai-asist-deepseek\\Portfolio_AI-Assistant-DeepSeek.pdf",
+    "D:\\1PythonProjects\\20251105-ai-asist-deepseek\\Portfolio_AI_Assistant_DeepSeek.pdf",
+    "D:\\1PythonProjects\\20251125BotForGroup\\Portfolio_Telegram_Group_Admin_Bot.pdf",
+    "D:\\1PythonProjects\\20260404MedVopros\\Portfolio_MedVopros.pdf",
+    "D:\\1PythonProjects\\20260404MedVopros\\Portfolio_VetVopros.pdf",
+    "D:\\1PythonProjects\\20260404MedVopros\\Portfolio_VetVopros1.pdf",
+    "D:\\1PythonProjects\\20260727TestHH1\\Portfolio_Ochistka_tovarnogo_kataloga_CSV.pdf",
+    "D:\\1PythonProjects\\20260727TestHH1\\Portfolio_Ozon_Seller_Automation.pdf",
+    "D:\\1PythonProjects\\20260729EmailVal\\Portfolio_Email_Validator_AcyMailing.pdf",
+    "D:\\1PythonProjects\\20260807TranslatePress\\Portfolio_WP_Multilang_Press.pdf",
+    "D:\\1PythonProjects\\20260807TranslatePress\\Portfolio_WP_Multilang_Press_.pdf",
+    "D:\\1PythonProjects\\20260807TranslatePress\\Portfolio_WP_Multilang_Press_EN.pdf",
+    "D:\\1PythonProjects\\20260824KworkCasino\\Portfolio_GOMEDA_BET_350.pdf"
+  ],
+  "generated_at": "2026-09-30T15:24:46+00:00"
+}

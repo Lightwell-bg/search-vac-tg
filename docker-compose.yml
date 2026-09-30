@@ -1,0 +1,16 @@
+# JEV is a remote HTTPS API (OpenRouter) - no extra container needed.
+services:
+  search-vac-tg:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+      - ./materials:/app/materials:ro
+      - ./config.ini:/app/config.ini:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

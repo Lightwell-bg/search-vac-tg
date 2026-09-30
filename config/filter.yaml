@@ -1,0 +1,115 @@
+# Ключевые слова (нижний регистр) для быстрой предфильтрации вакансий.
+strong_positive:
+  - n8n
+  - telegram bot
+  - телеграм бот
+  - телеграм-бот
+  - тг бот
+  - aiogram
+  - telethon
+  - python
+  - питон
+  - openai
+  - chatgpt api
+  - api integration
+  - интеграция api
+  - webhook
+  - вебхук
+  - автоматизация
+  - automation
+  - fastapi
+  - rag
+  - ai agent
+  - ии агент
+  - ai-агент
+  - mcp
+  - парсер
+  - parser
+  - scraping
+  - чат-бот
+  - chatbot
+  - llm
+  - gpt
+
+positive:
+  - wordpress
+  - woocommerce
+  - docker
+  - postgresql
+  - supabase
+  - sqlite
+  - crm
+  - amocrm
+  - bitrix24
+  - битрикс24
+  - google sheets
+  - гугл таблицы
+  - google drive
+  - vps
+  - ubuntu
+  - api
+  - бот
+  - bot
+  - интеграция
+  - make.com
+  - zapier
+  - html
+  - css
+  - javascript
+
+negative:
+  - copywriter
+  - копирайтер
+  - designer
+  - дизайнер
+  - таргетолог
+  - targetologist
+  - рилс
+  - монтаж
+  - видеомонтаж
+  - логотип
+  - illustrator
+  - 3d
+  - озвучка
+  - переводчик
+  - модератор
+
+strong_negative:
+  - smm manager
+  - smm-менеджер
+  - smm менеджер
+  - ведение инстаграм
+  - ведение соцсетей
+  - иллюстратор
+  - reels editor
+  - монтажёр
+  - recruiter
+  - рекрутер
+  - sales manager
+  - менеджер по продажам
+  - оператор колл-центра
+  - сборщик
+  - курьер
+  - репетитор
+  - бухгалтер
+  - юрист
+  - актёр
+  - модель для съемки
+
+# Юзернеймы админов каналов или рекламных подписей, которые нельзя принимать за контакт заказчика.
+ignore_contacts: []
+
+job_markers:
+  - нужен
+  - нужна
+  - ищем
+  - ищу
+  - требуется
+  - задача
+  - заказ
+  - бюджет
+  - оплата
+  - тз
+  - vacancy
+  - hiring
+  - looking for
