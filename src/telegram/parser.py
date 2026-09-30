@@ -18,10 +18,11 @@ from urllib.parse import parse_qs, urlparse
 @dataclass
 class ButtonInfo:
     text: str
-    kind: str  # callback | url | buy | url_auth | switch_inline | game | other
+    kind: str  # callback | url | buy | url_auth | user_profile | webview | copy | switch_inline | game | other
     row: int = 0
     col: int = 0
-    url: str | None = None
+    url: str | None = None            # url / url_auth / webview; tg://user?id=N for user_profile
+    copy_text: str | None = None      # "copy" button payload (often a @username or email)
     data_hex: str | None = None       # callback payload (bytes as hex)
     requires_password: bool = False   # callback asks for the account 2FA password
 
@@ -277,32 +278,58 @@ def normalize_post(post: RawPost, ignore_contacts: set[str] | None = None) -> No
 # ------------------------------------------------------------------------ Telethon
 
 
-def buttons_from_message(message) -> list[ButtonInfo]:
-    """Inline keyboard of a Telethon message -> ButtonInfo list."""
-    from telethon.tl import types as tl
+# Button kind by TL class name. Telethon <= 1.4x uses one class per button
+# (KeyboardButtonCallback ...); newer layers use KeyboardInlineButton(text, type=
+# InlineButtonType...). Matching by name works with both and never raises on a
+# class that a given Telethon version does not have.
+_KIND_BY_NAME = {
+    "Buy": "buy",
+    "Callback": "callback",
+    "Url": "url",
+    "UrlAuth": "url_auth",
+    "SwitchInline": "switch_inline",
+    "Game": "game",
+    "UserProfile": "user_profile",
+    "WebView": "webview",
+    "SimpleWebView": "webview",
+    "Copy": "copy",
+    "Disabled": "other",
+}
+_NAME_PREFIXES = ("InputInlineButtonType", "InlineButtonType", "InputKeyboardButton", "KeyboardButton")
 
+
+def _button_kind(obj) -> str:
+    name = type(obj).__name__
+    for prefix in _NAME_PREFIXES:
+        if name.startswith(prefix):
+            return _KIND_BY_NAME.get(name[len(prefix):], "other")
+    return "other"
+
+
+def buttons_from_message(message) -> list[ButtonInfo]:
+    """Inline keyboard of a Telethon message -> ButtonInfo list (any Telethon version)."""
     markup = getattr(message, "reply_markup", None)
-    if not isinstance(markup, tl.ReplyInlineMarkup):
+    if type(markup).__name__ != "ReplyInlineMarkup":
         return []
     result: list[ButtonInfo] = []
-    for r, row in enumerate(markup.rows):
-        for c, b in enumerate(row.buttons):
+    for r, row in enumerate(getattr(markup, "rows", None) or []):
+        for c, b in enumerate(getattr(row, "buttons", None) or []):
             text = getattr(b, "text", "") or ""
-            if isinstance(b, tl.KeyboardButtonBuy):
-                info = ButtonInfo(text, "buy", r, c)
-            elif isinstance(b, tl.KeyboardButtonCallback):
-                info = ButtonInfo(text, "callback", r, c, data_hex=(b.data or b"").hex(),
-                                  requires_password=bool(getattr(b, "requires_password", False)))
-            elif isinstance(b, (tl.KeyboardButtonUrlAuth, tl.InputKeyboardButtonUrlAuth)):
-                info = ButtonInfo(text, "url_auth", r, c, url=getattr(b, "url", None))
-            elif isinstance(b, tl.KeyboardButtonUrl):
-                info = ButtonInfo(text, "url", r, c, url=b.url)
-            elif isinstance(b, (tl.KeyboardButtonSwitchInline,)):
-                info = ButtonInfo(text, "switch_inline", r, c)
-            elif isinstance(b, tl.KeyboardButtonGame):
-                info = ButtonInfo(text, "game", r, c)
-            else:
-                info = ButtonInfo(text, "other", r, c)
+            # new layer: details live in b.type; old layer: on the button itself
+            spec = getattr(b, "type", None)
+            spec = spec if spec is not None and not isinstance(spec, (str, int)) else b
+            kind = _button_kind(spec)
+            info = ButtonInfo(text, kind, r, c)
+            if kind == "callback":
+                info.data_hex = (getattr(spec, "data", None) or b"").hex()
+                info.requires_password = bool(getattr(spec, "requires_password", False))
+            elif kind in ("url", "url_auth", "webview"):
+                info.url = getattr(spec, "url", None)
+            elif kind == "user_profile":
+                uid = getattr(spec, "user_id", None)
+                info.url = f"tg://user?id={uid}" if uid else None
+            elif kind == "copy":
+                info.copy_text = getattr(spec, "copy_text", None)
             result.append(info)
     return result
 

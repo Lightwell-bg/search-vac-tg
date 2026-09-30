@@ -60,7 +60,12 @@ class ChannelListener:
 
     async def _on_message(self, event) -> None:
         # do not block Telethon's update loop with JEV/LLM/clicks
-        task = asyncio.create_task(self.pipeline.process_post(self.tg.to_post(event.message)))
+        try:
+            post = self.tg.to_post(event.message)
+        except Exception:
+            log.exception("ERROR parsing event message")  # the poll will retry it
+            return
+        task = asyncio.create_task(self.pipeline.process_post(post))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -71,7 +76,13 @@ class ChannelListener:
                 last = await self.repo.get_last_message_id(ref.peer_id)
                 for msg in await self.tg.fetch_new(ref, last, self.catchup_limit):
                     key = (ref.peer_id, msg.id)
-                    outcome = await self.pipeline.process_post(self.tg.to_post(msg))
+                    try:
+                        post = self.tg.to_post(msg)
+                    except Exception:
+                        log.exception("ERROR parsing @%s/%s", ref.username, msg.id)
+                        outcome = "error"  # counted below; skipped after MAX_POST_ERRORS
+                    else:
+                        outcome = await self.pipeline.process_post(post)
                     if outcome == "error":
                         # not stored durably: keep the cursor so the post is fetched again
                         self._errors[key] = self._errors.get(key, 0) + 1

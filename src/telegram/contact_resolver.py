@@ -94,7 +94,8 @@ def is_contact_button(b: ButtonInfo) -> bool:
 
 def _paid_button(b: ButtonInfo) -> bool:
     return (b.kind == "buy" or has_payment_marker(b.text)
-            or (b.kind in ("url", "url_auth") and is_payment_link(b.url)))
+            or (b.kind in ("url", "url_auth", "webview") and is_payment_link(b.url))
+            or (b.kind == "copy" and has_payment_marker(b.copy_text)))
 
 
 @dataclass
@@ -170,8 +171,21 @@ class ContactResolver:
         external: list[ContactInfo] = [c for c in text_contacts if c.kind in ("bot", "bot_deeplink")]
         external += [c for c in text_contacts if c.kind == "url" and not is_payment_link(c.value)]
 
-        # 2. URL buttons (contact-labelled first)
         ignore = self._ignore_for(post)
+        # 1b. buttons that carry a human contact directly (no click needed):
+        #     "open user profile" and "copy text" buttons
+        for b in post.buttons:
+            if b.kind == "user_profile" and b.url:
+                c = ContactInfo("tg_link", b.url, "profile_button")
+                return ContactResult(DIRECT, c.value, [c], f"profile button {b.text!r}")
+            if b.kind == "copy" and b.copy_text:
+                found = [c for c in extract_contacts(b.copy_text, ignore) if c.kind in HUMAN_KINDS]
+                for c in found:
+                    c.source = "copy_button"
+                if found:
+                    return ContactResult(DIRECT, _best_human(found), found, f"copy button {b.text!r}")
+
+        # 2. URL buttons (contact-labelled first)
         url_btns = sorted((b for b in post.buttons if b.kind == "url" and b.url),
                           key=lambda b: 0 if is_contact_button(b) else 1)
         for b in url_btns:
@@ -190,8 +204,8 @@ class ContactResolver:
             else:
                 external.append(c)
         for b in post.buttons:
-            if b.kind == "url_auth" and is_contact_button(b) and b.url:
-                external.append(ContactInfo("url", b.url, "url_auth_button"))
+            if b.kind in ("url_auth", "webview") and is_contact_button(b) and b.url:
+                external.append(ContactInfo("url", b.url, f"{b.kind}_button"))
 
         # 3. one public callback button
         callbacks = [b for b in post.buttons if b.kind == "callback" and is_contact_button(b)]
