@@ -58,7 +58,8 @@ class OwnerOnlyMiddleware(BaseMiddleware):
 
 
 class BotHandlers:
-    def __init__(self, settings, repo, llm, profile: dict, *, runtime_settings=None, listener=None) -> None:
+    def __init__(self, settings, repo, llm, profile: dict, *, runtime_settings=None, listener=None,
+                 profile_service=None) -> None:
         self.settings = settings
         self.repo = repo
         self.llm = llm
@@ -70,7 +71,7 @@ class BotHandlers:
         self.router.message.outer_middleware(mw)
         self.router.callback_query.outer_middleware(mw)
         # menu commands, FSM inputs and menu callbacks are registered before the job-card callbacks
-        self.menu = MenuHandlers(repo, runtime_settings, listener)
+        self.menu = MenuHandlers(repo, runtime_settings, listener, profile_service)
         self.menu.register(self.router)
         self.router.callback_query.register(self.on_callback)
 

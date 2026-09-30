@@ -8,7 +8,9 @@ All untrusted strings (channel titles/usernames, model names) go through ``html.
 from __future__ import annotations
 
 import html
+import io
 import logging
+from pathlib import Path
 from typing import Any
 
 from aiogram import F, Router
@@ -18,6 +20,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Message
 
+from ..profile.service import ALLOWED_EXTENSIONS, MAX_UPLOAD_BYTES, parse_items
+from ..settings_store import POLL_INTERVALS
 from .stats_format import format_stats
 
 log = logging.getLogger("bot")
@@ -30,17 +34,21 @@ HELP_TEXT = (
     "Бот присылает подходящие заказы из публичных Telegram-каналов.\n"
     "/menu — меню: каналы, пороги, пауза, модель\n"
     "/channels — список каналов\n"
+    "/profile — профиль исполнителя (резюме, навыки)\n"
     "/stats — статистика работы\n"
     "/cancel — отмена ввода\n"
     "Под карточкой заказа: 👍/👎 — обратная связь, ✍️ — черновик отклика "
     "(отправляете заказчику вы сами)."
 )
-CALLBACK_PREFIX = r"^(m|ch|th):"
+CALLBACK_PREFIX = r"^(m|ch|th|pi|pf):"
 
 
 class MenuStates(StatesGroup):
     waiting_channel = State()
     waiting_model = State()
+    waiting_upload = State()
+    waiting_add_skills = State()
+    waiting_remove_skills = State()
 
 
 def _e(value: Any) -> str:
@@ -55,7 +63,7 @@ def _btn(text: str, data: str) -> InlineKeyboardButton:
 def parse_menu_callback(data: str | None) -> tuple[str, ...] | None:
     """``ch:t:123`` -> ("ch", "t", "123"); ints are validated by the caller via ``to_int``."""
     parts = (data or "").split(":")
-    if not 2 <= len(parts) <= 3 or parts[0] not in ("m", "ch", "th"):
+    if not 2 <= len(parts) <= 3 or parts[0] not in ("m", "ch", "th", "pi", "pf"):
         return None
     return tuple(parts)
 
@@ -82,6 +90,7 @@ def main_text(rs, channels: list[dict] | None) -> str:
             f"Порог {rs.notify_score} / высокий {rs.high_fit_score}\n"
             f"Платные контакты: {paid}\n"
             f"Модель: <code>{_e(rs.openrouter_model)}</code>\n"
+            f"⏱ Проверка каналов: каждые {rs.poll_interval_sec // 60} мин\n"
             f"Каналов: {active} активных")
 
 
@@ -92,7 +101,19 @@ def main_keyboard(rs) -> InlineKeyboardMarkup:
         [_btn("📡 Каналы", "m:ch"), _btn("🎯 Пороги", "m:th")],
         [_btn(paid, "m:paid"), _btn(pause, "m:pause")],
         [_btn("🤖 Модель", "m:md"), _btn("📊 Статистика", "m:st")],
+        [_btn("⏱ Период проверки", "m:pi"), _btn("👤 Профиль", "m:pr")],
     ])
+
+
+def interval_text(rs) -> str:
+    return f"⏱ Как часто проверять каналы\nСейчас: каждые {rs.poll_interval_sec // 60} мин"
+
+
+def interval_keyboard(rs) -> InlineKeyboardMarkup:
+    btns = [_btn(("✅ " if v == rs.poll_interval_sec else "") + f"{v // 60} мин", f"pi:{v}")
+            for v in POLL_INTERVALS]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        btns[:4], btns[4:], [_btn("⬅️ Назад", "m:main")]])
 
 
 def channels_text(channels: list[dict]) -> str:
@@ -169,11 +190,81 @@ def forwarded_channel_username(message) -> str | None:
     return f"@{username}" if isinstance(username, str) and username else None
 
 
+# ------------------------------------------------------------------ profile builders
+
+TELEGRAM_LIMIT = 4096
+UPLOAD_PROMPT = ("📎 Пришлите резюме или портфолио файлом: PDF (с текстом), DOCX, MD или TXT, до 10 МБ. "
+                 "/cancel — отмена")
+PHOTO_REMINDER = "Пришлите файлом (PDF/DOCX/TXT/MD), не фото"
+UPLOAD_REMINDER = "Жду файл (PDF/DOCX/TXT/MD). /cancel — отмена"
+ADD_SKILLS_PROMPT = "➕ Пришлите навыки через запятую или с новой строки. /cancel — отмена"
+REMOVE_SKILLS_PROMPT = "➖ Пришлите навыки, которые убрать, через запятую или с новой строки. /cancel — отмена"
+
+
+def profile_text(status: dict, compact: str) -> str:
+    """Status line + compact profile in <pre>, html-escaped and trimmed to the Telegram limit."""
+    head = (f"👤 Профиль исполнителя\n"
+            f"Основа: {status.get('base_projects', 0)} проектов из портфолио; "
+            f"загружено файлов: {status.get('uploads', 0)}; "
+            f"ручные: +{status.get('added', 0)} / −{status.get('removed', 0)}\n"
+            f"Так профиль видят JEV и OpenRouter:\n")
+    budget = TELEGRAM_LIMIT - len(head) - len("<pre></pre>") - 1
+    body = compact
+    while True:
+        esc = _e(body)
+        if len(esc) <= budget or not body:
+            break
+        body = body[:max(0, len(body) - max(1, len(esc) - budget))].rstrip()
+    return f"{head}<pre>{esc}</pre>"
+
+
+def profile_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_btn("📎 Загрузить резюме/портфолио", "pf:up")],
+        [_btn("➕ Добавить навыки", "pf:add"), _btn("➖ Убрать навыки", "pf:rm")],
+        [_btn("📂 Файлы", "pf:fl")],
+        [_btn("⬅️ Назад", "m:main")],
+    ])
+
+
+def _size_label(size: int) -> str:
+    return f"{size / 1024:.0f} КБ" if size < 1024 * 1024 else f"{size / 1024 / 1024:.1f} МБ"
+
+
+def files_text(uploads: list[tuple[str, int]]) -> str:
+    if not uploads:
+        return "📂 Загруженных файлов нет."
+    lines = ["📂 Загруженные файлы (🗑 — удалить):"]
+    lines += [f"• {_e(n)} ({_size_label(s)})" for n, s in uploads]
+    return "\n".join(lines)
+
+
+def files_keyboard(uploads: list[tuple[str, str, int]]) -> InlineKeyboardMarkup:
+    """``uploads`` is ``[(id, name, size)]``; the callback carries the stable random id."""
+    rows = [[_btn(f"🗑 {n}"[:40], f"pf:d:{i}")] for i, n, _ in uploads]
+    rows.append([_btn("⬅️ Назад", "m:pr")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def confirm_file_keyboard(upload_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        _btn("✅ Да", f"pf:dy:{upload_id}"), _btn("❌ Нет", "pf:fl")]])
+
+
+def upload_summary(summary: dict) -> str:
+    added = summary.get("added") or []
+    head = (f"Добавлено в профиль: {', '.join(added)}" if added
+            else "Новых навыков не найдено, файл учтён")
+    return (f"{head}\nВсего технологий: {summary.get('total', 0)}; проектов: {summary.get('projects', 0)}"
+            + ("; профиль пока предварительный" if summary.get("provisional") else ""))
+
+
 # ------------------------------------------------------------------ handlers
 
 
 class MenuHandlers:
-    def __init__(self, repo, runtime_settings=None, listener=None) -> None:
+    def __init__(self, repo, runtime_settings=None, listener=None, profile_service=None) -> None:
+        self.profile_service = profile_service
         self.repo = repo
         self.runtime_settings = runtime_settings
         self.listener = listener
@@ -185,10 +276,14 @@ class MenuHandlers:
         m.register(self.cmd_start, Command("start", "help"))
         m.register(self.cmd_menu, Command("menu"))
         m.register(self.cmd_channels, Command("channels"))
+        m.register(self.cmd_profile, Command("profile"))
         m.register(self.cmd_stats, Command("stats"))
         m.register(self.cmd_cancel, Command("cancel"))
         m.register(self.on_channel_input, StateFilter(MenuStates.waiting_channel))
         m.register(self.on_model_input, StateFilter(MenuStates.waiting_model))
+        m.register(self.on_upload_input, StateFilter(MenuStates.waiting_upload))
+        m.register(self.on_add_skills_input, StateFilter(MenuStates.waiting_add_skills))
+        m.register(self.on_remove_skills_input, StateFilter(MenuStates.waiting_remove_skills))
         router.callback_query.register(self.on_callback, F.data.regexp(CALLBACK_PREFIX))
 
     # -- helpers
@@ -233,7 +328,27 @@ class MenuHandlers:
         chs = await self._channels()
         await message.answer(channels_text(chs), reply_markup=channels_keyboard(chs), parse_mode="HTML")
 
+    async def _send_profile(self, message: Message) -> None:
+        ps = self.profile_service
+        if ps is None:
+            await message.answer(UNAVAILABLE, parse_mode=None)
+            return
+        await message.answer(profile_text(ps.status(), ps.compact()), reply_markup=profile_keyboard(),
+                             parse_mode="HTML")
+
+    async def _show_profile(self, cb: CallbackQuery) -> None:
+        ps = self.profile_service
+        await self._edit(cb, profile_text(ps.status(), ps.compact()), profile_keyboard())
+
+    async def _show_files(self, cb: CallbackQuery) -> None:
+        ups = self.profile_service.list_uploads_ids()
+        await self._edit(cb, files_text([(n, s) for _, n, s in ups]), files_keyboard(ups))
+
     # -- commands
+
+    async def cmd_profile(self, message: Message, state: FSMContext | None = None) -> None:
+        await self._clear(state)
+        await self._send_profile(message)
 
     async def cmd_start(self, message: Message, state: FSMContext | None = None) -> None:
         await self._clear(state)
@@ -293,6 +408,74 @@ class MenuHandlers:
         await message.answer(f"Модель изменена: {rs.openrouter_model}", parse_mode=None)
         await self._send_main(message)
 
+    async def on_upload_input(self, message: Message, state: FSMContext | None = None) -> None:
+        ps = self.profile_service
+        if ps is None:
+            await self._clear(state)
+            await message.answer(UNAVAILABLE, parse_mode=None)
+            return
+        doc = getattr(message, "document", None)
+        if doc is None:
+            await message.answer(PHOTO_REMINDER if getattr(message, "photo", None) else UPLOAD_REMINDER,
+                                 parse_mode=None)
+            return
+        limit_mb = MAX_UPLOAD_BYTES // (1024 * 1024)
+        if Path(doc.file_name or "").suffix.lower() not in ALLOWED_EXTENSIONS:
+            await message.answer("Допустимые форматы: PDF, DOCX, MD, TXT. Пришлите другой файл или /cancel",
+                                 parse_mode=None)
+            return
+        size = doc.file_size
+        if not isinstance(size, int) or size <= 0 or size > MAX_UPLOAD_BYTES:
+            await message.answer(f"Размер файла неизвестен или больше {limit_mb} МБ. Пришлите другой или /cancel",
+                                 parse_mode=None)
+            return
+        try:
+            dest = io.BytesIO()
+            buf = await message.bot.download(doc, destination=dest)
+            buf = buf if buf is not None else dest
+            buf.seek(0)
+            content = buf.read(MAX_UPLOAD_BYTES + 1)
+            if len(content) > MAX_UPLOAD_BYTES:
+                await message.answer(f"Файл больше {limit_mb} МБ. Пришлите другой или /cancel", parse_mode=None)
+                return
+            summary = await ps.add_upload(doc.file_name or "file", content)
+        except ValueError as e:
+            await message.answer(f"{e}\nПопробуйте ещё раз или /cancel", parse_mode=None)
+            return
+        except Exception:  # noqa: BLE001 - keep the state, let the owner retry
+            log.exception("profile upload failed")
+            await message.answer("Не удалось обработать файл. Попробуйте ещё раз или /cancel", parse_mode=None)
+            return
+        await self._clear(state)
+        await message.answer(upload_summary(summary), parse_mode=None)
+        await self._send_profile(message)
+
+    async def _skills_input(self, message: Message, state, add: bool) -> None:
+        ps = self.profile_service
+        if ps is None:
+            await self._clear(state)
+            await message.answer(UNAVAILABLE, parse_mode=None)
+            return
+        items = parse_items(message.text or "")
+        if not items:
+            await message.answer("Нужен текст: навыки через запятую или с новой строки", parse_mode=None)
+            return
+        try:
+            changed = await (ps.add_skills(items) if add else ps.remove_skills(items))
+        except ValueError as e:
+            await message.answer(f"{e}\nПопробуйте ещё раз или /cancel", parse_mode=None)
+            return
+        await self._clear(state)
+        word = "Добавлено" if add else "Убрано"
+        await message.answer(f"{word}: {', '.join(changed)}" if changed else "Без изменений", parse_mode=None)
+        await self._send_profile(message)
+
+    async def on_add_skills_input(self, message: Message, state: FSMContext | None = None) -> None:
+        await self._skills_input(message, state, True)
+
+    async def on_remove_skills_input(self, message: Message, state: FSMContext | None = None) -> None:
+        await self._skills_input(message, state, False)
+
     # -- callbacks
 
     async def on_callback(self, cb: CallbackQuery, state: FSMContext | None = None) -> None:
@@ -309,6 +492,10 @@ class MenuHandlers:
                 await self._on_menu(cb, state, action, rs)
             elif kind == "ch":
                 await self._on_channel(cb, state, action, arg)
+            elif kind == "pf":
+                await self._on_profile(cb, state, action, arg)
+            elif kind == "pi":
+                await self._on_interval(cb, action, rs)
             else:
                 await self._on_threshold(cb, action, arg, rs)
         except Exception:  # noqa: BLE001 - a menu press must never crash the dispatcher
@@ -341,6 +528,13 @@ class MenuHandlers:
             await self._show_main(cb, rs)
         elif action == "th":
             await self._edit(cb, thresholds_text(rs), thresholds_keyboard(rs))
+        elif action == "pr":
+            if self.profile_service is None:
+                await cb.answer(UNAVAILABLE, show_alert=True)
+                return
+            await self._show_profile(cb)
+        elif action == "pi":
+            await self._edit(cb, interval_text(rs), interval_keyboard(rs))
         elif action == "md":
             if state is not None:
                 await state.set_state(MenuStates.waiting_model)
@@ -354,6 +548,36 @@ class MenuHandlers:
                 await cb.answer(str(e)[:200], show_alert=True)
                 return
             await self._show_main(cb, rs)
+        await cb.answer()
+
+    async def _on_profile(self, cb: CallbackQuery, state, action: str, arg: str | None) -> None:
+        ps = self.profile_service
+        if ps is None:
+            await cb.answer(UNAVAILABLE, show_alert=True)
+            return
+        prompts = {"up": (MenuStates.waiting_upload, UPLOAD_PROMPT),
+                   "add": (MenuStates.waiting_add_skills, ADD_SKILLS_PROMPT),
+                   "rm": (MenuStates.waiting_remove_skills, REMOVE_SKILLS_PROMPT)}
+        if action in prompts:
+            new_state, prompt = prompts[action]
+            if state is not None:
+                await state.set_state(new_state)
+            await self._edit(cb, prompt, InlineKeyboardMarkup(inline_keyboard=[[_btn("⬅️ Назад", "m:pr")]]),
+                             html_mode=False)
+        elif action == "fl":
+            await self._show_files(cb)
+        elif action in ("d", "dy"):
+            name = ps.name_for_id(arg or "")
+            if name is None:
+                await cb.answer("Список файлов изменился", show_alert=True)
+                await self._show_files(cb)
+                return
+            if action == "d":
+                await self._edit(cb, f"Удалить файл {_e(name)}? Навыки из него пропадут из профиля.",
+                                 confirm_file_keyboard(arg))
+            else:
+                await ps.delete_upload(name)
+                await self._show_files(cb)
         await cb.answer()
 
     async def _on_channel(self, cb: CallbackQuery, state, action: str, arg: str | None) -> None:
@@ -391,6 +615,22 @@ class MenuHandlers:
             await cb.answer()
             return
         await self._show_channels(cb)
+        await cb.answer()
+
+    async def _on_interval(self, cb: CallbackQuery, action: str, rs) -> None:
+        if rs is None:
+            await cb.answer(UNAVAILABLE, show_alert=True)
+            return
+        value = to_int(action)
+        if value not in POLL_INTERVALS:
+            await cb.answer()
+            return
+        try:
+            await rs.set("poll_interval_sec", value)
+        except ValueError as e:
+            await cb.answer(str(e)[:200], show_alert=True)
+            return
+        await self._edit(cb, interval_text(rs), interval_keyboard(rs))
         await cb.answer()
 
     async def _on_threshold(self, cb: CallbackQuery, key: str, arg: str | None, rs) -> None:

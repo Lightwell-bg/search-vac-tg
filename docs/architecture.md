@@ -69,6 +69,13 @@ Tables are created on start (`create_all`); there are no migrations.
 4. Channels: the bot calls `ChannelListener.add_channel / set_enabled / set_click / remove_channel`. `channels.yaml` only seeds rows the first time a channel appears; removed channels are remembered in `settings` and never re-seeded. Only public channels are added; the account never joins.
 5. After the first change from the bot the DB value overrides `.env`; `.env` and `channels.yaml` are initial defaults only.
 
+## Profile layers (`src/profile/service.py`)
+
+- BASE: `data/profile.json` (committed, built locally by `scripts/rebuild_profile.py`; the bot never writes it).
+- UPLOADS: files sent to the bot are saved in `data/materials_uploads/`; the builder runs only over them (in `asyncio.to_thread`) and the result is cached in `data/profile_uploads.json`.
+- OVERRIDES: `data/profile_overrides.json` `{"add": [], "remove": []}` (manual skills, case-insensitive).
+- EFFECTIVE = BASE + UPLOADS, then OVERRIDES (`ProfileService.load()`); `compact_profile(effective)` is what JEV/OpenRouter get. After every change `ProfileService` notifies subscribers (`pipeline.set_profile`, `bot.set_profile`), so no restart is needed. Mutations are serialized with an `asyncio.Lock`; files are written atomically.
+
 ## Job statuses (`JobStatus`)
 
 | Status | Meaning |
@@ -123,7 +130,7 @@ Duplicates do not create jobs: the message is marked `is_duplicate` and linked t
 
 ## Concurrency
 
-- Two ingestion paths: the Telethon `NewMessage` handler (each event runs as a separate `asyncio` task so JEV/LLM/clicks never block Telethon's update loop) and `poll_once` every `[telegram] poll_interval_sec` (120 s).
+- Two ingestion paths: the Telethon `NewMessage` handler (each event runs as a separate `asyncio` task so JEV/LLM/clicks never block Telethon's update loop) and `poll_once` every `[telegram] poll_interval_sec` (по умолчанию 120 с, меняется в боте).
 - The unique key `(channel_tg_id, message_id)` drops the copy that arrives by both paths; `message_exists` is a fast pre-check.
 - `_dedup_lock` makes save message + dedup search + create job atomic, so two identical posts processed at once cannot create two jobs.
 - `_in_progress` (set of job ids) prevents the retry loop from touching a job that is being processed.

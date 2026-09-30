@@ -5,14 +5,15 @@ import pytest
 
 from src.bot.handlers import BotHandlers
 from src.bot.menu import (
-    MenuHandlers, MenuStates, channels_keyboard, channels_text, confirm_delete_keyboard, main_keyboard,
+    MenuHandlers, MenuStates, channels_keyboard, channels_text, confirm_delete_keyboard, interval_keyboard,
+    main_keyboard,
     main_text, parse_menu_callback, thresholds_keyboard, thresholds_text,
 )
 
 
 def rs_fake(**kw):
     base = dict(notify_score=60, high_fit_score=80, show_paid_contact=False, notifications_paused=False,
-                openrouter_model="google/x", set=AsyncMock())
+                openrouter_model="google/x", poll_interval_sec=120, set=AsyncMock())
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -62,6 +63,35 @@ def test_thresholds_keyboard():
     kb = thresholds_keyboard(rs_fake())
     assert {"th:n:+5", "th:n:-5", "th:h:+5", "th:h:-5"} <= set(datas(kb))
     assert "60" in thresholds_text(rs_fake()) and "80" in thresholds_text(rs_fake())
+
+
+def test_main_menu_shows_interval_and_button():
+    rs = rs_fake(poll_interval_sec=300)
+    assert "⏱ Проверка каналов: каждые 5 мин" in main_text(rs, CHS)
+    assert "⏱ Период проверки" in texts(main_keyboard(rs))
+
+
+def test_interval_keyboard_marks_current():
+    kb = interval_keyboard(rs_fake(poll_interval_sec=300))
+    assert texts(kb)[:7] == ["1 мин", "2 мин", "✅ 5 мин", "10 мин", "15 мин", "30 мин", "60 мин"]
+    assert "⬅️ Назад" in texts(kb) and "pi:300" in datas(kb) and "pi:3600" in datas(kb)
+    assert all(len(d.encode()) < 64 for d in datas(kb))
+
+
+async def test_interval_callback_sets_value():
+    rs = rs_fake()
+    menu = make_menu(rs, make_listener())
+    cb = make_cb("pi:300")
+    await menu.on_callback(cb, FakeState())
+    rs.set.assert_awaited_once_with("poll_interval_sec", 300)
+    cb.message.edit_text.assert_awaited()
+    rs.set.reset_mock()
+    await menu.on_callback(make_cb("pi:77"), FakeState())
+    await menu.on_callback(make_cb("pi:abc"), FakeState())
+    rs.set.assert_not_awaited()
+    cb2 = make_cb("m:pi")
+    await menu.on_callback(cb2, FakeState())
+    assert "Сейчас" in cb2.message.edit_text.await_args.args[0]
 
 
 def test_parse_menu_callback():

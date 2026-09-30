@@ -142,7 +142,7 @@ def build_card(job, message, sources, settings, html: bool = True) -> str:
     tail_lines.insert(meta_start, "")
     head = "\n".join(head_lines)
     tail = "\n".join(tail_lines)
-    body_raw = strip_footer((job.normalized_text or "").strip(), footer_markers(settings))
+    body_raw = strip_footer((job.normalized_text or "").strip(), footer_markers(settings), names)
     if title:
         body_raw = drop_title_line(body_raw, title)  # do not print the title twice
     limit = TEXT_LIMIT

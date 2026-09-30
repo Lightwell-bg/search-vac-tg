@@ -178,18 +178,52 @@ def find_technologies(text: str) -> dict[str, int]:
     return found
 
 
-def read_document(path: Path) -> str | None:
-    """Text of a supported file, capped; None if unreadable or scanned (with a warning in the log)."""
+MAX_PDF_PAGES = 50
+MAX_DOCX_ENTRIES = 1000
+MAX_DOCX_UNCOMPRESSED = 50 * 1024 * 1024
+MAX_DOCX_RATIO = 100
+SUSPICIOUS_ERROR = "Файл выглядит подозрительно (слишком большой после распаковки)"
+
+
+class SuspiciousFileError(ValueError):
+    """Archive-like document that looks like a zip bomb."""
+
+
+def check_docx_archive(path: Path) -> None:
+    """Reject a DOCX (zip) with too many entries, too much data or an extreme compression ratio."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as zf:
+            infos = zf.infolist()
+    except zipfile.BadZipFile as e:
+        raise ValueError("Повреждённый DOCX") from e
+    if len(infos) > MAX_DOCX_ENTRIES:
+        raise SuspiciousFileError(SUSPICIOUS_ERROR)
+    if sum(i.file_size for i in infos) > MAX_DOCX_UNCOMPRESSED:
+        raise SuspiciousFileError(SUSPICIOUS_ERROR)
+    for i in infos:
+        if i.file_size > 0 and i.file_size > MAX_DOCX_RATIO * max(i.compress_size, 1):
+            raise SuspiciousFileError(SUSPICIOUS_ERROR)
+
+
+def read_document(path: Path, strict: bool = False) -> str | None:
+    """Text of a supported file, capped; None if unreadable or scanned (with a warning in the log).
+
+    With ``strict`` a suspicious (zip-bomb like) DOCX raises ``SuspiciousFileError`` instead of None.
+    """
     ext = path.suffix.lower()
     try:
         if ext in (".md", ".txt"):
-            text = path.read_text(encoding="utf-8-sig", errors="replace")
+            with open(path, encoding="utf-8-sig", errors="replace") as f:
+                text = f.read(MAX_DOC_CHARS)
         elif ext == ".pdf":
             from pypdf import PdfReader
             reader = PdfReader(str(path))
             chunks: list[str] = []
             total = 0
-            for page in reader.pages:
+            for n, page in enumerate(reader.pages):
+                if n >= MAX_PDF_PAGES:
+                    break
                 chunks.append(page.extract_text() or "")
                 total += len(chunks[-1])
                 if total > MAX_DOC_CHARS:
@@ -199,15 +233,34 @@ def read_document(path: Path) -> str | None:
                 log.warning("PDF has no text layer (scanned?), skipped: %s", path)
                 return None
         elif ext == ".docx":
+            check_docx_archive(path)
             import docx
             d = docx.Document(str(path))
-            parts = [p.text for p in d.paragraphs]
-            for table in d.tables:
-                for row in table.rows:
-                    parts.append(" | ".join(c.text.strip() for c in row.cells))
+            parts: list[str] = []
+            total = 0
+            for p in d.paragraphs:
+                parts.append(p.text)
+                total += len(p.text)
+                if total > MAX_DOC_CHARS:
+                    break
+            if total <= MAX_DOC_CHARS:
+                for table in d.tables:
+                    for row in table.rows:
+                        line = " | ".join(c.text.strip() for c in row.cells)
+                        parts.append(line)
+                        total += len(line)
+                        if total > MAX_DOC_CHARS:
+                            break
+                    if total > MAX_DOC_CHARS:
+                        break
             text = "\n".join(parts)
         else:
             return None
+    except SuspiciousFileError:
+        if strict:
+            raise
+        log.warning("suspicious document skipped: %s", path)
+        return None
     except Exception as e:  # noqa: BLE001 - one broken file must not stop the build
         log.warning("cannot read %s: %s: %s", path, type(e).__name__, e)
         return None

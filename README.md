@@ -403,14 +403,27 @@ Semantics: a post is rejected if it is shorter than `min_text_length`; if it has
 
 Everything below is done from your notification bot (owner only); no restart is needed. Send `/menu`.
 
-- **Main menu** (`/menu`): current state (notifications on/paused, thresholds, paid contacts, model, number of active channels) and buttons: Channels, Thresholds, Paid contacts toggle, Pause / Resume, Model, Statistics. Commands: `/menu`, `/channels`, `/stats`, `/cancel`.
+- **Main menu** (`/menu`): current state (notifications on/paused, thresholds, paid contacts, model, number of active channels) and buttons: Channels, Thresholds, Paid contacts toggle, Pause / Resume, Model, Check interval, Statistics. Commands: `/menu`, `/channels`, `/stats`, `/cancel`.
 - **Channels**: one row per channel. The first button toggles monitoring (✅ on / ⏸ off), "👆 click: yes/no" toggles `click_callbacks`, 🗑 deletes after a confirmation ("Delete @x? Yes / No"). "➕ Add channel" asks for `@username` or a `t.me/...` link (a forwarded post from the channel also works). Only public channels are supported; the account never joins anything. On an error you can retry or send `/cancel`.
 - **Thresholds**: −5 / −1 / +1 / +5 for the notification threshold and the high-fit threshold (0-100, the notification threshold cannot be above the high-fit one).
 - **Paid contacts**: toggle whether jobs with a paid contact are shown.
 - **Pause**: while paused, accepted jobs are held; after "Resume" the backlog is sent immediately.
+- **Check interval** (⏱): how often channels are polled: 1, 2, 5, 10, 15, 30 or 60 min; applies immediately (the current wait is cut short). `poll_interval_sec` in `config.ini` is only the default.
 - **Model**: send a new OpenRouter model id, e.g. `google/gemini-2.5-flash-lite` (list: https://openrouter.ai/models); an invalid value is rejected with a message.
 
 Where settings live: after the first change from the bot the value is stored in the database and **overrides** `.env` (`NOTIFY_SCORE`, `HIGH_FIT_SCORE`, `SHOW_PAID_CONTACT`, `OPENROUTER_MODEL`). These `.env` values and `config/channels.yaml` are only initial defaults. `channels.yaml` seeds a channel only the first time it appears; a channel deleted from the bot is not re-added from the file.
+
+### Profile (from the bot)
+
+The profile is the short description of the executor (skills, technologies, services, best-fit and "not interested" categories). JEV and OpenRouter never see the resume itself: they receive the **compact profile** (`compact_profile`, at most ~900 characters), which is also shown in the bot inside the profile screen. `/profile` (or "👤 Profile" in `/menu`) shows the status line (base projects, uploaded files, manual +added / -removed skills) and the compact text. Buttons:
+
+- **📎 Upload resume/portfolio**: send a PDF (with a text layer), DOCX, MD or TXT file up to 10 MB as a *document* (not a photo). The bot extracts technologies and projects and replies with what was added to the profile. A scanned PDF without text is rejected.
+- **➕ Add skills / ➖ Remove skills**: send names separated by commas or new lines (1-40 characters each). Matching is case-insensitive. Adding a skill that was removed (and vice versa) cancels the earlier action.
+- **📂 Files**: the list of uploaded files; 🗑 deletes a file after a confirmation, its skills disappear from the profile.
+
+Changes apply immediately (no restart): JEV, OpenRouter and reply drafts use the new profile right away.
+
+How the layers work: the **base profile** `data/profile.json` comes from the repo (built locally from your portfolio) and is never changed by the bot. Uploaded files are stored in `data/materials_uploads/`, the profile derived only from them is cached in `data/profile_uploads.json`, manual changes are in `data/profile_overrides.json`. The effective profile = base + uploads, then manual add/remove. All these files live in `data/` on the server, so **back up `data/`** together with the database. They are git-ignored, so `git pull` does not touch them.
 
 ## Profile
 

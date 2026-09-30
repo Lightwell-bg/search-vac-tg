@@ -359,14 +359,36 @@ _BOT_LINK_RE = re.compile(
     r"^\W*(?:https?://)?(?:t\.me|telegram\.me)/[A-Za-z0-9_]*bot\b\S*\W*$", re.I)
 
 
-def strip_footer(text: str, extra_markers=()) -> str:
-    """Drop trailing promo lines (bot deep-links, ad/subscribe markers) from a channel post."""
-    markers = [m.lower() for m in (*FOOTER_MARKERS, *(extra_markers or ())) if m and str(m).strip()]
-    markers = [str(m).strip().lower() for m in markers]
+def strip_footer(text: str, extra_markers=(), channels=()) -> str:
+    """Drop the trailing promo block (bot deep-links, ad/subscribe markers) from a channel post.
+
+    A trailing bot link is a promo only if the trailing block holds a marker line, or the link
+    itself names the source channel (e.g. ``?start=uttelejobo_vac`` for ``telejobo``); otherwise it
+    may be the real application link and stays.
+    """
+    markers = [str(m).strip().lower() for m in (*FOOTER_MARKERS, *(extra_markers or ())) if m and str(m).strip()]
+    if isinstance(channels, str):
+        channels = (channels,)
+    chans = [str(c).strip().lstrip("@").lower() for c in (channels or ()) if str(c).strip().lstrip("@")]
     lines = (text or "").rstrip().split("\n")
+
+    def is_marker(line: str) -> bool:
+        return any(m in line.lower() for m in markers)
+
+    # the block of consecutive trailing candidate lines (blank / bot link / marker)
+    i = len(lines)
+    while i > 0:
+        line = lines[i - 1].strip()
+        if not line or _BOT_LINK_RE.match(line) or is_marker(line):
+            i -= 1
+        else:
+            break
+    block = lines[i:]
+    if any(is_marker(ln) for ln in block):
+        return "\n".join(lines[:i]).rstrip()
     while lines:
         line = lines[-1].strip()
-        if not line or _BOT_LINK_RE.match(line) or any(m in line.lower() for m in markers):
+        if not line or (_BOT_LINK_RE.match(line) and any(c in line.lower() for c in chans)):
             lines.pop()
             continue
         break

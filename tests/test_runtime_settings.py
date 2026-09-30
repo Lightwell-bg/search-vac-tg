@@ -17,7 +17,7 @@ from .test_pipeline import JEV_RESULTS, NO_CONTACT_TEXT
 
 
 def env(**kw):
-    base = dict(notify_score=65, high_fit_score=80, show_paid_contact=False, openrouter_model="a/b")
+    base = dict(notify_score=65, high_fit_score=80, show_paid_contact=False, openrouter_model="a/b", poll_interval_sec=120)
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -25,7 +25,8 @@ def env(**kw):
 async def test_defaults_from_env(repo):
     rs = await RuntimeSettings.load(repo, env(notify_score=70, show_paid_contact=True))
     assert rs.as_dict() == {"notify_score": 70, "high_fit_score": 80, "show_paid_contact": True,
-                            "notifications_paused": False, "openrouter_model": "a/b"}
+                            "notifications_paused": False, "openrouter_model": "a/b",
+                            "poll_interval_sec": 120}
 
 
 async def test_db_overrides_env(repo):
@@ -49,6 +50,8 @@ async def test_invalid_stored_value_ignored(repo):
     ("notify_score", 81),  # above high_fit_score=80
     ("high_fit_score", 60),  # below notify_score=65
     ("show_paid_contact", "yes"), ("notifications_paused", 1),
+    ("poll_interval_sec", 45), ("poll_interval_sec", True), ("poll_interval_sec", "x"),
+    ("poll_interval_sec", 0),
     ("openrouter_model", ""), ("openrouter_model", "   "), ("openrouter_model", "nomodel"),
     ("openrouter_model", "a/b c"), ("openrouter_model", "a/" + "b" * 100), ("unknown", 1),
 ])
@@ -67,6 +70,17 @@ async def test_valid_values(repo):
     await rs.set("openrouter_model", "anthropic/claude-3.5-sonnet:beta")
     await rs.set("openrouter_model", "~vendor/model-latest")
     assert (rs.notify_score, rs.high_fit_score) == (70, 100)
+
+
+async def test_poll_interval_persisted_and_overrides_env(repo):
+    rs = await RuntimeSettings.load(repo, env())
+    await rs.set("poll_interval_sec", 600)
+    await rs.set("poll_interval_sec", "60")
+    await rs.set("poll_interval_sec", 600)
+    again = await RuntimeSettings.load(repo, env(poll_interval_sec=300))
+    assert again.poll_interval_sec == 600
+    await repo.set_setting("poll_interval_sec", 45)  # not an allowed value: ignored
+    assert (await RuntimeSettings.load(repo, env(poll_interval_sec=300))).poll_interval_sec == 300
 
 
 async def test_subscribe_applies_to_live_objects(repo):

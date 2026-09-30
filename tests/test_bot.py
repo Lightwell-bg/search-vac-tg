@@ -200,3 +200,24 @@ def test_strip_footer_and_title_helpers():
     assert strip_footer("A\nспецмаркер здесь", ["СпецМаркер"]) == "A"
     assert drop_title_line("🔥  Нужен  БОТ\nтело", "нужен бот") == "тело"
     assert drop_title_line("другое\nНужен бот", "Нужен бот") == "другое\nНужен бот"
+
+
+def test_footer_keeps_real_application_link_without_markers():
+    from src.telegram.parser import strip_footer
+
+    text = "Нужен бот\n@recruiter пишите сюда https://t.me/acme_apply_bot?start=vacancy42"
+    assert strip_footer(text, (), ["telejobo"]) == text
+    text2 = "Нужен бот\nоткликнуться: https://t.me/acme_apply_bot?start=vacancy42"
+    assert strip_footer(text2) == text2
+    # the link names the source channel -> promo even without markers
+    assert strip_footer("Нужен бот\nhttps://t.me/RD_vacbot?start=uttelejobo_vac", (), ["telejobo"]) == "Нужен бот"
+    # a marker line in the trailing block -> the whole block goes
+    assert strip_footer("Нужен бот\nподписаться\nhttps://t.me/acme_apply_bot?start=x") == "Нужен бот"
+
+
+def test_card_keeps_real_bot_link_and_contact():
+    text = "Нужен бот для магазина\n@recruiter https://t.me/acme_apply_bot?start=vacancy42"
+    job = make_job(title="Нужен бот для магазина", normalized_text=text, fit_score=90, budget=None,
+                   category="telegram_automation", rules_result={"relevant_skills": ["бот"]})
+    card = build_card(job, None, sources("telejobo"), SETTINGS, html=False)
+    assert "https://t.me/acme_apply_bot?start=vacancy42" in card

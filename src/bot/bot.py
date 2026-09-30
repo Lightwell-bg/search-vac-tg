@@ -19,7 +19,7 @@ class NotifyBot:
     """Implements the pipeline ``Notifier`` protocol."""
 
     def __init__(self, settings, repo, llm, profile: dict, *, runtime_settings=None, listener=None,
-                 pipeline=None) -> None:
+                 pipeline=None, profile_service=None) -> None:
         self.settings = settings
         self.repo = repo
         self.runtime_settings = runtime_settings   # RuntimeSettings (src/settings_store.py)
@@ -27,7 +27,7 @@ class NotifyBot:
         self.pipeline = pipeline                   # Pipeline (flush_backlog etc.)
         self.bot = Bot(token=settings.notify_bot_token)
         self.handlers = BotHandlers(settings, repo, llm, profile, runtime_settings=runtime_settings,
-                                    listener=listener)
+                                    listener=listener, profile_service=profile_service)
         self.dp = Dispatcher(storage=MemoryStorage())
         self.dp.include_router(self.handlers.router)
 
@@ -54,6 +54,7 @@ class NotifyBot:
         """Publish the command list for the owner's chat (fallback: default scope). Never raises."""
         commands = [BotCommand(command="menu", description="Главное меню"),
                     BotCommand(command="channels", description="Каналы"),
+                    BotCommand(command="profile", description="Профиль исполнителя"),
                     BotCommand(command="stats", description="Статистика"),
                     BotCommand(command="cancel", description="Отмена ввода")]
         try:

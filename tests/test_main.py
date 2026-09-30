@@ -11,7 +11,7 @@ async def test_run_returns_2_when_session_unauthorized(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod, "load_settings", lambda: s)
     monkeypatch.setattr(main_mod, "setup_logging", lambda _s: None)
     monkeypatch.setattr(main_mod, "load_channels", lambda _f: [SimpleNamespace(username="x")])
-    monkeypatch.setattr(main_mod, "load_profile", lambda _f: {})
+    monkeypatch.setattr(main_mod, "ProfileService", MagicMock(return_value=MagicMock(startup=AsyncMock())))
     monkeypatch.setattr(main_mod, "OpenRouterClient", MagicMock(from_settings=lambda _s: MagicMock(close=AsyncMock())))
 
     jev_client = MagicMock(close=AsyncMock())

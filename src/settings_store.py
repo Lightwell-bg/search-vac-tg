@@ -21,7 +21,8 @@ MODEL_MAX_LEN = 100
 
 INT_KEYS = ("notify_score", "high_fit_score")
 BOOL_KEYS = ("show_paid_contact", "notifications_paused")
-ALL_KEYS = INT_KEYS + BOOL_KEYS + ("openrouter_model",)
+ALL_KEYS = INT_KEYS + BOOL_KEYS + ("openrouter_model", "poll_interval_sec")
+POLL_INTERVALS = (60, 120, 300, 600, 900, 1800, 3600)
 
 
 def _valid_score(key: str, value: Any) -> int:
@@ -36,13 +37,14 @@ def _valid_score(key: str, value: Any) -> int:
 
 class RuntimeSettings:
     def __init__(self, repo, *, notify_score: int, high_fit_score: int, show_paid_contact: bool,
-                 notifications_paused: bool, openrouter_model: str) -> None:
+                 notifications_paused: bool, openrouter_model: str, poll_interval_sec: int = 300) -> None:
         self.repo = repo
         self.notify_score = notify_score
         self.high_fit_score = high_fit_score
         self.show_paid_contact = show_paid_contact
         self.notifications_paused = notifications_paused
         self.openrouter_model = openrouter_model
+        self.poll_interval_sec = poll_interval_sec
         self._listeners: list[Callable[["RuntimeSettings"], Any]] = []
         self._lock = asyncio.Lock()
 
@@ -55,6 +57,7 @@ class RuntimeSettings:
             "show_paid_contact": settings.show_paid_contact,
             "notifications_paused": False,
             "openrouter_model": settings.openrouter_model,
+            "poll_interval_sec": getattr(settings, "poll_interval_sec", 300),
         }
         stored = await repo.get_settings()
         for key in ALL_KEYS:
@@ -64,6 +67,8 @@ class RuntimeSettings:
             ok = (isinstance(v, bool) if key in BOOL_KEYS
                   else isinstance(v, str) if key == "openrouter_model"
                   else isinstance(v, int) and not isinstance(v, bool))
+            if ok and key == "poll_interval_sec" and v not in POLL_INTERVALS:
+                ok = False
             if ok:
                 values[key] = v
             else:
@@ -84,6 +89,13 @@ class RuntimeSettings:
             high = value if key == "high_fit_score" else self.high_fit_score
             if notify > high:
                 raise ValueError("Порог уведомления не может быть выше порога высокого соответствия")
+            return value
+        if key == "poll_interval_sec":
+            if isinstance(value, str) and re.fullmatch(r"\s*\d{1,5}\s*", value):
+                value = int(value)
+            if isinstance(value, bool) or not isinstance(value, int) or value not in POLL_INTERVALS:
+                raise ValueError("Период проверки должен быть одним из: "
+                                 + ", ".join(f"{v // 60} мин" for v in POLL_INTERVALS))
             return value
         if key in BOOL_KEYS:
             if not isinstance(value, bool):

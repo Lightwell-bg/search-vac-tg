@@ -18,7 +18,7 @@ from .filtering.rules import RuleFilter
 from .jev.classifier import JevClassifier
 from .jev.client import JevClient
 from .llm.openrouter import OpenRouterClient
-from .profile.loader import load_profile
+from .profile.service import ProfileService
 from .settings_store import RuntimeSettings
 from .telegram.client import TelegramService
 from .telegram.contact_resolver import ContactResolver
@@ -28,10 +28,10 @@ log = logging.getLogger("main")
 
 
 def build_pipeline(s, repo, *, telegram_actions=None, notifier=None, llm=None, jev_client=None,
-                   channels=None, click_policy=None) -> Pipeline:
+                   channels=None, click_policy=None, profile_service=None) -> Pipeline:
     """Wire the pipeline from settings. Also used by scripts/dry_run.py."""
     rules = RuleFilter.from_file(s.filter_file, s.min_text_length)
-    profile = load_profile(s.profile_file)
+    profile = (profile_service or ProfileService(s)).load()
     if profile.get("provisional"):
         log.warning("using PROVISIONAL profile: add materials and run scripts/rebuild_profile.py")
     jev = JevClassifier(jev_client or JevClient.from_settings(s), s.jev_min_confidence, s.jev_max_text_chars)
@@ -82,16 +82,21 @@ async def run() -> int:
                          s.flood_sleep_threshold, s.contact_click_delay_sec)
     llm = OpenRouterClient.from_settings(s)
     runtime = await RuntimeSettings.load(repo, s)
+    profile_service = ProfileService(s)
+    await profile_service.startup()  # rebuild the uploads cache if it is missing/stale, before the pipeline
     holder: dict = {}  # listener is created after the pipeline; click policy reads it lazily
     pipeline = build_pipeline(
         s, repo, telegram_actions=tg, notifier=None, llm=llm, channels=channels,
+        profile_service=profile_service,
         click_policy=lambda post: holder["listener"].click_allowed(post.channel_tg_id)
         if "listener" in holder else True)
     listener = ChannelListener(tg, pipeline, repo, channels, catchup_limit=s.catchup_limit,
                                poll_interval_sec=s.poll_interval_sec, retry_interval_sec=s.retry_interval_sec)
     holder["listener"] = listener
-    bot = NotifyBot(s, repo, llm, load_profile(s.profile_file),
-                    runtime_settings=runtime, listener=listener, pipeline=pipeline)
+    bot = NotifyBot(s, repo, llm, profile_service.load(), runtime_settings=runtime, listener=listener,
+                    pipeline=pipeline, profile_service=profile_service)
+    profile_service.subscribe(pipeline.set_profile)
+    profile_service.subscribe(bot.set_profile)
     pipeline.notifier = bot
 
     state = {"paused": runtime.notifications_paused}
@@ -99,6 +104,8 @@ async def run() -> int:
 
     def on_settings_change(rs: RuntimeSettings) -> None:
         rs.apply_to(pipeline.opt, llm)
+        if listener.poll_interval != rs.poll_interval_sec:
+            listener.set_poll_interval(rs.poll_interval_sec)
         was_paused, state["paused"] = state["paused"], rs.notifications_paused
         if was_paused and not rs.notifications_paused:
             # unpaused: send the held (ACCEPTED) backlog right away, no second contact click
@@ -107,6 +114,7 @@ async def run() -> int:
             t.add_done_callback(flush_tasks.discard)
 
     runtime.apply_to(pipeline.opt, llm)
+    listener.poll_interval = runtime.poll_interval_sec
     runtime.subscribe(on_settings_change)
     try:
         await tg.start()

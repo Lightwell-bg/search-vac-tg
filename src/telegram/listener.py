@@ -62,6 +62,7 @@ class ChannelListener:
         self.channel_configs = channel_configs  # yaml seed list
         self.catchup_limit = catchup_limit
         self.poll_interval = poll_interval_sec
+        self._wake = asyncio.Event()  # set by set_poll_interval to cut the current wait short
         self.retry_interval = retry_interval_sec
         self.refs: list[ChannelRef] = []
         self._enabled: set[int] = set()
@@ -298,6 +299,18 @@ class ChannelListener:
                 log.exception("ERROR polling @%s", ref.username)
         return processed
 
+    def set_poll_interval(self, sec: int) -> None:
+        """Change the poll period live; wakes the loop so the new value applies immediately."""
+        self.poll_interval = int(sec)
+        self._wake.set()
+
+    async def _wait_next_poll(self) -> None:
+        self._wake.clear()
+        try:
+            await asyncio.wait_for(self._wake.wait(), timeout=self.poll_interval)
+        except asyncio.TimeoutError:
+            pass
+
     async def run(self) -> None:
         await self.setup()
         await self.run_loop()
@@ -320,4 +333,4 @@ class ChannelListener:
                 except Exception:
                     log.exception("ERROR retry_pending")
                 next_retry = loop.time() + self.retry_interval
-            await asyncio.sleep(self.poll_interval)
+            await self._wait_next_poll()
