@@ -141,7 +141,7 @@ sudo docker compose restart
 sudo docker compose down
 ```
 
-- Channels and filter: edit `config/channels.yaml` / `config/filter.yaml` on the server (`nano`), then `sudo docker compose restart`.
+- Channels: manage in the bot (`/menu`). Filter: edit `config/filter.yaml` on the server (`nano`), then `sudo docker compose restart`.
 - Profile: the ready `data/profile.json` and `data/profile.md` are tracked in git and arrive with `git clone`. Rebuild on the server only after you put your files into `/opt/search-vac-tg/materials` on the host (the directory is mounted into the container read-only, so it cannot be filled from inside): `sudo docker compose exec search-vac-tg python scripts/rebuild_profile.py && sudo docker compose restart`.
 - Volumes (`docker-compose.yml`): `./data` (database, session, profile, logs; writable), `./config`, `./materials` and `./config.ini` (read-only). Secrets come from `.env` (`env_file`). The session file gets mode 0600 automatically. `.dockerignore` keeps `.claude/`, `materials/private/`, `*.session` and `data/` out of the image. Container logs are rotated (10 MB x 3). JEV needs no extra container.
 - Backup (online, without stopping; needs `sudo apt install -y sqlite3`):
@@ -369,7 +369,7 @@ JEV is called only through OpenRouter with the same key; its model is set in `co
 
 ### Adding a channel
 
-Edit `config/channels.yaml`; only public channels are supported (the service never joins anything):
+The easy way is the bot (`/menu` → Channels → Add channel, see "Managing from the bot"). `config/channels.yaml` only seeds the initial list: a channel is taken from it the first time it appears; later changes and deleted channels are managed in the bot. To seed from the file, edit `config/channels.yaml`; only public channels are supported (the service never joins anything):
 
 ```yaml
 channels:
@@ -396,8 +396,21 @@ Semantics: a post is rejected if it is shorter than `min_text_length`; if it has
 
 ### Changing thresholds and the OpenRouter model
 
-- Thresholds: edit `NOTIFY_SCORE` / `HIGH_FIT_SCORE` in `.env`, restart (`sudo docker compose restart`).
-- OpenRouter model: change one line `OPENROUTER_MODEL=...` in `.env`, restart the service (`sudo docker compose restart`).
+- Preferred: in the bot, `/menu` → Thresholds / Model. The value is stored in the database and overrides `.env`.
+- `.env` values (`NOTIFY_SCORE`, `HIGH_FIT_SCORE`, `SHOW_PAID_CONTACT`, `OPENROUTER_MODEL`) are only initial defaults, used until a setting is first changed in the bot; after that editing `.env` has no effect on it.
+
+## Managing from the bot
+
+Everything below is done from your notification bot (owner only); no restart is needed. Send `/menu`.
+
+- **Main menu** (`/menu`): current state (notifications on/paused, thresholds, paid contacts, model, number of active channels) and buttons: Channels, Thresholds, Paid contacts toggle, Pause / Resume, Model, Statistics. Commands: `/menu`, `/channels`, `/stats`, `/cancel`.
+- **Channels**: one row per channel. The first button toggles monitoring (✅ on / ⏸ off), "👆 click: yes/no" toggles `click_callbacks`, 🗑 deletes after a confirmation ("Delete @x? Yes / No"). "➕ Add channel" asks for `@username` or a `t.me/...` link (a forwarded post from the channel also works). Only public channels are supported; the account never joins anything. On an error you can retry or send `/cancel`.
+- **Thresholds**: −5 / −1 / +1 / +5 for the notification threshold and the high-fit threshold (0-100, the notification threshold cannot be above the high-fit one).
+- **Paid contacts**: toggle whether jobs with a paid contact are shown.
+- **Pause**: while paused, accepted jobs are held; after "Resume" the backlog is sent immediately.
+- **Model**: send a new OpenRouter model id, e.g. `google/gemini-2.5-flash-lite` (list: https://openrouter.ai/models); an invalid value is rejected with a message.
+
+Where settings live: after the first change from the bot the value is stored in the database and **overrides** `.env` (`NOTIFY_SCORE`, `HIGH_FIT_SCORE`, `SHOW_PAID_CONTACT`, `OPENROUTER_MODEL`). These `.env` values and `config/channels.yaml` are only initial defaults. `channels.yaml` seeds a channel only the first time it appears; a channel deleted from the bot is not re-added from the file.
 
 ## Profile
 

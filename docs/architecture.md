@@ -19,7 +19,8 @@ One process (`python -m src.main`), one asyncio event loop:
 | scorer | `src/filtering/scorer.py` | final fit score and decision |
 | ContactResolver | `src/telegram/contact_resolver.py` | contact for accepted jobs, paid-contact detection |
 | Repository / Database | `src/db/` | SQLite (WAL) through SQLAlchemy async |
-| NotifyBot | `src/bot/` | aiogram: cards, `/start`, `/stats`, feedback, reply drafts; owner only |
+| NotifyBot | `src/bot/` | aiogram: cards, feedback, reply drafts; owner only. `menu.py`: `/menu`, `/channels`, `/stats`, `/cancel`, FSM (MemoryStorage) for adding a channel and changing the model |
+| RuntimeSettings | `src/settings_store.py` | settings editable from the bot, stored in the `settings` table, validated and pushed to live objects |
 
 ## Data flow
 
@@ -47,7 +48,8 @@ The JEV call is one HTTPS request (`POST .../systemone`) with `state` (compact p
 
 | Table | Purpose |
 |---|---|
-| `channels` | monitored channels; `last_message_id` is the poll cursor |
+| `channels` | monitored channels; `last_message_id` is the poll cursor; flags `enabled` (monitoring on/off) and `click_callbacks` (may the resolver press the contact button) are edited from the bot |
+| `settings` | key/value runtime settings: `notify_score`, `high_fit_score`, `show_paid_contact`, `notifications_paused`, `openrouter_model`, and the list of channels deleted from the bot |
 | `messages` | every stored post (original and normalized text, buttons, extracted data); unique `(channel_tg_id, message_id)`; `is_duplicate`, `job_id` |
 | `jobs` | one row per unique vacancy: status, attempts, `rules_result` / `jev_result` / `llm_result`, route, category, fit score, decision reason, contact status/value, last error |
 | `job_sources` | links a job to every message with the same vacancy (original, hash duplicate, fuzzy duplicate with similarity) |
@@ -58,6 +60,14 @@ The JEV call is one HTTPS request (`POST .../systemone`) with `state` (compact p
 | `llm_usage` | every OpenRouter call: purpose (`job_review`, `application_generation`, `profile_building`), tokens, cost, error |
 
 Tables are created on start (`create_all`); there are no migrations.
+
+## Runtime settings flow
+
+1. On start `RuntimeSettings.load` takes defaults from `.env` (`Settings`) and overrides each key that has a row in `settings`; `apply_to` copies the values to `PipelineOptions` and the OpenRouter client.
+2. The bot (`/menu`) calls `RuntimeSettings.set(key, value)`: validation (`ValueError` with a Russian message is shown to the owner), write to the DB, in-memory update, then subscribers (`main.on_settings_change`) re-apply the values to live objects. No restart.
+3. Unpausing (`notifications_paused` True -> False) starts `Pipeline.flush_backlog` in the background: held `ACCEPTED` jobs are sent. While paused the pipeline keeps jobs `ACCEPTED` without spending attempts.
+4. Channels: the bot calls `ChannelListener.add_channel / set_enabled / set_click / remove_channel`. `channels.yaml` only seeds rows the first time a channel appears; removed channels are remembered in `settings` and never re-seeded. Only public channels are added; the account never joins.
+5. After the first change from the bot the DB value overrides `.env`; `.env` and `channels.yaml` are initial defaults only.
 
 ## Job statuses (`JobStatus`)
 

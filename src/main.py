@@ -19,6 +19,7 @@ from .jev.classifier import JevClassifier
 from .jev.client import JevClient
 from .llm.openrouter import OpenRouterClient
 from .profile.loader import load_profile
+from .settings_store import RuntimeSettings
 from .telegram.client import TelegramService
 from .telegram.contact_resolver import ContactResolver
 from .telegram.listener import ChannelListener
@@ -27,7 +28,7 @@ log = logging.getLogger("main")
 
 
 def build_pipeline(s, repo, *, telegram_actions=None, notifier=None, llm=None, jev_client=None,
-                   channels=None) -> Pipeline:
+                   channels=None, click_policy=None) -> Pipeline:
     """Wire the pipeline from settings. Also used by scripts/dry_run.py."""
     rules = RuleFilter.from_file(s.filter_file, s.min_text_length)
     profile = load_profile(s.profile_file)
@@ -44,7 +45,7 @@ def build_pipeline(s, repo, *, telegram_actions=None, notifier=None, llm=None, j
         llm=llm,
         resolver=ContactResolver(
             telegram_actions, rules.ignore_contacts,
-            click_policy=lambda post: (post.channel_username or "").lower() not in disabled),
+            click_policy=click_policy or (lambda post: (post.channel_username or "").lower() not in disabled)),
         notifier=notifier,
         profile=profile,
         options=PipelineOptions(
@@ -57,6 +58,14 @@ def build_pipeline(s, repo, *, telegram_actions=None, notifier=None, llm=None, j
     )
 
 
+async def _flush(pipeline) -> None:
+    try:
+        n = await pipeline.flush_backlog()
+        log.info("backlog flushed after unpause: %s jobs processed", n)
+    except Exception:
+        log.exception("ERROR flushing backlog after unpause")
+
+
 async def run() -> int:
     s = load_settings()
     setup_logging(s)
@@ -64,10 +73,7 @@ async def run() -> int:
     if missing:
         log.error("fill these variables in .env: %s", ", ".join(missing))
         return 2
-    channels = load_channels(s.channels_file)
-    if not channels:
-        log.error("no enabled channels in %s", s.channels_file)
-        return 2
+    channels = load_channels(s.channels_file)  # seed only: the DB is the source of truth afterwards
 
     db = Database(s.database_url)
     await db.init()
@@ -75,16 +81,41 @@ async def run() -> int:
     tg = TelegramService(s.session_file, s.telegram_api_id, s.telegram_api_hash,
                          s.flood_sleep_threshold, s.contact_click_delay_sec)
     llm = OpenRouterClient.from_settings(s)
-    bot = NotifyBot(s, repo, llm, load_profile(s.profile_file))
-    pipeline = build_pipeline(s, repo, telegram_actions=tg, notifier=bot, llm=llm, channels=channels)
+    runtime = await RuntimeSettings.load(repo, s)
+    holder: dict = {}  # listener is created after the pipeline; click policy reads it lazily
+    pipeline = build_pipeline(
+        s, repo, telegram_actions=tg, notifier=None, llm=llm, channels=channels,
+        click_policy=lambda post: holder["listener"].click_allowed(post.channel_tg_id)
+        if "listener" in holder else True)
     listener = ChannelListener(tg, pipeline, repo, channels, catchup_limit=s.catchup_limit,
                                poll_interval_sec=s.poll_interval_sec, retry_interval_sec=s.retry_interval_sec)
+    holder["listener"] = listener
+    bot = NotifyBot(s, repo, llm, load_profile(s.profile_file),
+                    runtime_settings=runtime, listener=listener, pipeline=pipeline)
+    pipeline.notifier = bot
+
+    state = {"paused": runtime.notifications_paused}
+    flush_tasks: set[asyncio.Task] = set()
+
+    def on_settings_change(rs: RuntimeSettings) -> None:
+        rs.apply_to(pipeline.opt, llm)
+        was_paused, state["paused"] = state["paused"], rs.notifications_paused
+        if was_paused and not rs.notifications_paused:
+            # unpaused: send the held (ACCEPTED) backlog right away, no second contact click
+            t = asyncio.get_running_loop().create_task(_flush(pipeline))
+            flush_tasks.add(t)
+            t.add_done_callback(flush_tasks.discard)
+
+    runtime.apply_to(pipeline.opt, llm)
+    runtime.subscribe(on_settings_change)
     try:
         await tg.start()
         log.info("JEV: %s model=%s; OpenRouter model=%s; notify>=%s",
-                 s.jev_url, s.jev_model, s.openrouter_model, s.notify_score)
+                 s.jev_url, s.jev_model, runtime.openrouter_model, runtime.notify_score)
         # Telethon handles updates/reconnects in its own background tasks once connected
-        await asyncio.gather(listener.run(), bot.start_polling())
+        # registry seeding must finish before the bot can mutate channels
+        await listener.setup()
+        await asyncio.gather(listener.run_loop(), bot.start_polling())
     except RuntimeError as e:
         log.error("%s", e)  # startup errors carry their own hint (e.g. the login command)
         return 2

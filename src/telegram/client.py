@@ -35,6 +35,10 @@ def secure_session_files(session_path: str) -> None:
             pass
 
 
+class ChannelLookupError(Exception):
+    """A username cannot be monitored; the message is a Russian reason for the user."""
+
+
 @dataclass
 class ChannelRef:
     username: str
@@ -92,6 +96,26 @@ class TelegramService:
             self.channels[ref.peer_id] = ref
             refs.append(ref)
         return refs
+
+    async def lookup_public_channel(self, username: str) -> ChannelRef:
+        """Resolve one username (never joins). Raises ChannelLookupError with a Russian
+        reason for not found / user / bot / private; FloodWaitError propagates."""
+        try:
+            entity = await self.client.get_entity(username)
+        except (ValueError, errors.UsernameInvalidError, errors.UsernameNotOccupiedError):
+            raise ChannelLookupError(f"@{username} не найден") from None
+        if isinstance(entity, tl.User):
+            kind = "бот" if getattr(entity, "bot", False) else "пользователь"
+            raise ChannelLookupError(f"@{username}: это {kind}, а не канал")
+        if not isinstance(entity, tl.Channel):
+            raise ChannelLookupError(f"@{username}: это не публичный канал или группа")
+        if not getattr(entity, "username", None):
+            raise ChannelLookupError(f"@{username}: канал приватный (нет публичного username)")
+        if not (getattr(entity, "broadcast", False) or getattr(entity, "megagroup", False)):
+            raise ChannelLookupError(f"@{username}: это не канал и не супергруппа")
+        ref = ChannelRef(entity.username, utils.get_peer_id(entity), entity, entity.title)
+        self.channels[ref.peer_id] = ref
+        return ref
 
     def to_post(self, message) -> RawPost:
         ref = self.channels.get(message.chat_id)

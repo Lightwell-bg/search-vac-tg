@@ -38,6 +38,7 @@ ROUTE_JEV_REVIEW = "JEV → OpenRouter review"
 ROUTE_JEV_FALLBACK = "JEV error → OpenRouter"
 
 ORPHAN_GRACE = timedelta(minutes=2)
+_NOTIFY_STAGE = (JobStatus.ACCEPTED, JobStatus.NOTIFY_ERROR, JobStatus.NOTIFYING)
 
 
 class Notifier(Protocol):
@@ -52,6 +53,7 @@ class PipelineOptions:
     jev_fallback_to_openrouter: bool = True
     show_paid_contact: bool = False
     retry_limit: int = 5
+    notifications_paused: bool = False   # runtime switch from the bot: hold cards, keep ACCEPTED
 
 
 class Pipeline:
@@ -70,6 +72,8 @@ class Pipeline:
         self.opt = options
         self._dedup_lock = asyncio.Lock()
         self._in_progress: set[int] = set()
+        self._retry_lock = asyncio.Lock()
+        self._last_round_ids: list[int] = []
 
     def set_profile(self, profile: dict) -> None:
         self.profile = profile
@@ -108,8 +112,27 @@ class Pipeline:
             return "failed"
 
     async def retry_pending(self) -> int:
-        """Recover orphan messages and re-run jobs in retryable statuses."""
+        """Recover orphan messages and re-run jobs in retryable statuses (serialized)."""
+        async with self._retry_lock:
+            return await self._retry_pending()
+
+    async def flush_backlog(self) -> int:
+        """Send everything held while notifications were paused; call right after unpausing.
+        Repeats while full batches keep coming (retry_pending takes 50 jobs at a time)."""
+        total = 0
+        prev: set[int] | None = None
+        while True:
+            done = await self.retry_pending()
+            total += done
+            ids = set(self._last_round_ids)
+            if done == 0 or ids == prev:
+                break  # no progress: nothing (new) was processed this round
+            prev = ids
+        return total
+
+    async def _retry_pending(self) -> int:
         done = 0
+        self._last_round_ids = []
         before = datetime.now(timezone.utc) - ORPHAN_GRACE
         for msg in await self.repo.orphan_messages(before, 50):
             try:
@@ -119,7 +142,11 @@ class Pipeline:
                 done += 1
             except Exception:
                 log.exception("ERROR recovering orphan message %s", msg.id)
-        for job in await self.repo.jobs_by_status(list(JobStatus.RETRYABLE), self.opt.retry_limit):
+        statuses = list(JobStatus.RETRYABLE)
+        if self.opt.notifications_paused:
+            # held until unpaused; excluded in SQL so they cannot starve other retries
+            statuses = [x for x in statuses if x not in _NOTIFY_STAGE]
+        for job in await self.repo.jobs_by_status(statuses, self.opt.retry_limit):
             if job.id in self._in_progress:
                 continue
             if job.status == JobStatus.NEW and job.updated_at and _aware(job.updated_at) > before:
@@ -127,6 +154,7 @@ class Pipeline:
             try:
                 await self._resume(job)
                 done += 1
+                self._last_round_ids.append(job.id)
             except Exception as e:
                 log.exception("ERROR retrying job %s", job.id)
                 await self._fail_stage(job.id, e)
@@ -304,6 +332,10 @@ class Pipeline:
         if result.status == PAID and not self.opt.show_paid_contact:
             await self.repo.update_job(job_id, status=JobStatus.PAID_SKIPPED)
             return "paid_skipped"
+        if self.opt.notifications_paused:
+            # stays ACCEPTED (contact already resolved, no attempt spent): flush_backlog sends it
+            log.info("NOTIFICATION_PAUSED job %s", job_id)
+            return "paused"
         if self.notifier is None:
             await self.repo.increment_attempts(job_id)
             await self.repo.update_job(job_id, status=JobStatus.NOTIFY_ERROR, last_error="notifier missing")

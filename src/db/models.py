@@ -65,7 +65,19 @@ class Channel(Base):
     username: Mapped[str] = mapped_column(String(64), index=True)
     title: Mapped[str | None] = mapped_column(String(256))
     last_message_id: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    click_callbacks: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Setting(Base):
+    """Runtime setting changed from the bot; ``value`` is JSON-encoded."""
+
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class Message(Base):

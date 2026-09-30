@@ -108,3 +108,5 @@
      sudo sqlite3 data/app.db ".backup data/backup-$(date +%F).db"
      sudo cp data/telegram.session data/telegram.session.bak
      ```
+
+10. Дальше всё настраивается в боте: отправьте `/menu` (каналы, пороги, платные контакты, пауза, модель). Настройки хранятся в базе и перекрывают `.env` / `config/channels.yaml`, которые задают лишь начальные значения.

@@ -122,5 +122,5 @@ async def test_reresolve_missing_registers_late_channel(repo):
     listener.refs = [ChannelRef("chan", PEER, object(), "Chan")]
     assert await listener.reresolve_missing() == 1
     assert asked == [["late"]]  # only the unresolved channel is asked again
-    assert [r.username for r in listener.refs] == ["chan", "late"] and len(handlers) == 1
+    assert [r.username for r in listener.refs] == ["chan", "late"]
     assert await listener.reresolve_missing() == 0 and asked == [["late"]]

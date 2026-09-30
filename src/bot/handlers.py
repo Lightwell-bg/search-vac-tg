@@ -6,23 +6,16 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware, Router
-from aiogram.filters import Command
 from aiogram.types import CallbackQuery, LinkPreviewOptions, Message, TelegramObject
 
 from ..llm.schemas import LlmError
 from ..profile.loader import compact_profile
 from ..profile.matcher import relevant_projects
 from .keyboards import job_keyboard
-from .stats_format import format_stats
+from .menu import MenuHandlers
 
 log = logging.getLogger("bot")
 
-HELP_TEXT = (
-    "Бот присылает подходящие заказы из публичных Telegram-каналов.\n"
-    "/stats — статистика работы\n"
-    "Под карточкой заказа: 👍/👎 — обратная связь, ✍️ — черновик отклика "
-    "(отправляете заказчику вы сами)."
-)
 APPLICATION_NOTE = "Отправьте заказчику сами — автоматически ничего не отправляется."
 
 
@@ -65,7 +58,7 @@ class OwnerOnlyMiddleware(BaseMiddleware):
 
 
 class BotHandlers:
-    def __init__(self, settings, repo, llm, profile: dict) -> None:
+    def __init__(self, settings, repo, llm, profile: dict, *, runtime_settings=None, listener=None) -> None:
         self.settings = settings
         self.repo = repo
         self.llm = llm
@@ -76,18 +69,10 @@ class BotHandlers:
         mw = OwnerOnlyMiddleware(settings.owner_telegram_id)
         self.router.message.outer_middleware(mw)
         self.router.callback_query.outer_middleware(mw)
-        self.router.message.register(self.cmd_start, Command("start", "help"))
-        self.router.message.register(self.cmd_stats, Command("stats"))
+        # menu commands, FSM inputs and menu callbacks are registered before the job-card callbacks
+        self.menu = MenuHandlers(repo, runtime_settings, listener)
+        self.menu.register(self.router)
         self.router.callback_query.register(self.on_callback)
-
-    # ---------------------------------------------------------------- commands
-
-    async def cmd_start(self, message: Message) -> None:
-        await message.answer(HELP_TEXT, parse_mode=None)
-
-    async def cmd_stats(self, message: Message) -> None:
-        stats = await self.repo.get_stats()
-        await message.answer(format_stats(stats), parse_mode=None)
 
     # --------------------------------------------------------------- callbacks
 

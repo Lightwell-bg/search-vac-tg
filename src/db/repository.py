@@ -1,10 +1,11 @@
 """Data-access layer. Every method opens its own session/transaction; errors propagate."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from src.db.database import Database
@@ -19,6 +20,7 @@ from src.db.models import (
     LlmUsage,
     Message,
     Notification,
+    Setting,
 )
 
 
@@ -27,14 +29,77 @@ class Repository:
         self.db = db
 
     # ---- channels -------------------------------------------------------
-    async def upsert_channel(self, tg_id: int, username: str, title: str | None) -> None:
+    async def upsert_channel(self, tg_id: int, username: str, title: str | None, *,
+                             enabled: bool = True, click_callbacks: bool = True) -> None:
+        """Insert or refresh a channel. Flags are applied only on insert: an existing
+        row keeps the ``enabled``/``click_callbacks`` values set from the bot."""
         async with self.db.session() as s:
             ch = (await s.execute(select(Channel).where(Channel.tg_id == tg_id))).scalar_one_or_none()
             if ch is None:
-                s.add(Channel(tg_id=tg_id, username=username, title=title))
+                s.add(Channel(tg_id=tg_id, username=username, title=title,
+                              enabled=enabled, click_callbacks=click_callbacks))
+                try:
+                    await s.commit()
+                    return
+                except IntegrityError:  # a concurrent insert of the same tg_id won: update instead
+                    await s.rollback()
+                    ch = (await s.execute(select(Channel).where(Channel.tg_id == tg_id))).scalar_one()
+            ch.username = username
+            ch.title = title
+            await s.commit()
+
+    async def list_channels(self) -> list[Channel]:
+        async with self.db.session() as s:
+            return list((await s.execute(select(Channel).order_by(Channel.id))).scalars().all())
+
+    async def get_channel_by_username(self, username: str) -> Channel | None:
+        name = username.strip().lstrip("@").lower()
+        async with self.db.session() as s:
+            return (await s.execute(
+                select(Channel).where(func.lower(Channel.username) == name).limit(1))).scalar_one_or_none()
+
+    async def set_channel_flags(self, tg_id: int, enabled: bool | None = None,
+                                click_callbacks: bool | None = None) -> bool:
+        """Update the given flags; returns False when the channel does not exist."""
+        values: dict[str, Any] = {}
+        if enabled is not None:
+            values["enabled"] = bool(enabled)
+        if click_callbacks is not None:
+            values["click_callbacks"] = bool(click_callbacks)
+        async with self.db.session() as s:
+            if not values:
+                return (await s.execute(select(Channel.id).where(Channel.tg_id == tg_id))).first() is not None
+            res = await s.execute(update(Channel).where(Channel.tg_id == tg_id).values(**values))
+            await s.commit()
+            return bool(res.rowcount)
+
+    async def delete_channel(self, tg_id: int) -> bool:
+        """Remove only the channel row; its messages and jobs stay."""
+        async with self.db.session() as s:
+            res = await s.execute(delete(Channel).where(Channel.tg_id == tg_id))
+            await s.commit()
+            return bool(res.rowcount)
+
+    # ---- runtime settings -----------------------------------------------
+    async def get_settings(self) -> dict[str, Any]:
+        async with self.db.session() as s:
+            rows = (await s.execute(select(Setting))).scalars().all()
+        out: dict[str, Any] = {}
+        for row in rows:
+            try:
+                out[row.key] = json.loads(row.value)
+            except ValueError:
+                continue  # corrupted row: ignore, defaults apply
+        return out
+
+    async def set_setting(self, key: str, value: Any) -> None:
+        payload = json.dumps(value, ensure_ascii=False)
+        async with self.db.session() as s:
+            row = await s.get(Setting, key)
+            if row is None:
+                s.add(Setting(key=key, value=payload))
             else:
-                ch.username = username
-                ch.title = title
+                row.value = payload
             await s.commit()
 
     async def get_last_message_id(self, tg_id: int) -> int:

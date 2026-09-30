@@ -14,6 +14,7 @@
 - [x] 12 Тесты
 - [x] 13 README/QUICK_START/architecture
 - [x] 14 Codex review
+- [x] 15 Управление из бота (/menu: каналы, пороги, платные контакты, пауза, модель; настройки в БД)
 
 ## Codex review: 17 findings
 

@@ -10,6 +10,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from src.db.models import Base
 
 
+# (table, column, DDL) added after the first release; create_all never alters existing tables
+_ADDED_COLUMNS = (
+    ("channels", "enabled", "BOOLEAN NOT NULL DEFAULT 1"),
+    ("channels", "click_callbacks", "BOOLEAN NOT NULL DEFAULT 1"),
+)
+
+
+def _migrate(conn) -> None:  # noqa: ANN001
+    """Lightweight in-place migration: add missing columns (idempotent, keeps all rows)."""
+    if conn.dialect.name != "sqlite":
+        return
+    for table, column, ddl in _ADDED_COLUMNS:
+        cols = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+        if cols and column not in cols:
+            conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
 class Database:
     def __init__(self, url: str) -> None:
         self.url = url
@@ -26,6 +43,7 @@ class Database:
     async def init(self) -> None:
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(_migrate)
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
