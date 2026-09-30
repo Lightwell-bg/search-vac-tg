@@ -2,14 +2,10 @@
 
 Подробности, таблицы настроек и диагностика: [README_RU.md](../README_RU.md). Все команды выполняются на сервере по SSH. Сервис работает только в Docker; путь на сервере `/opt/search-vac-tg`, сервис `search-vac-tg`.
 
-1. Установите Docker (если его нет) и скачайте код. URL репозитория возьмите на GitHub: кнопка Code → SSH.
+1. Установите Docker (если его нет) и скачайте код:
    ```bash
    curl -fsSL https://get.docker.com | sudo sh
-   REPO_URL=
-   ```
-   Вставьте скопированный URL сразу после `REPO_URL=` и выполните:
-   ```bash
-   cd /opt && sudo git clone "$REPO_URL" search-vac-tg
+   cd /opt && sudo git clone https://github.com/Lightwell-bg/search-vac-tg.git
    cd /opt/search-vac-tg
    ```
 
@@ -75,6 +71,7 @@
    ```bash
    sudo docker compose run --rm search-vac-tg python scripts/telegram_login.py
    ```
+   +359877447225
 
 7. (Необязательно) Пробный прогон на примерах (без Telegram, реальные JEV/OpenRouter; ожидается таблица из 8 вакансий и `JEV errors: 0`):
    ```bash

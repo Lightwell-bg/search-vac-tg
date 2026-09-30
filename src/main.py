@@ -85,6 +85,9 @@ async def run() -> int:
                  s.jev_url, s.jev_model, s.openrouter_model, s.notify_score)
         # Telethon handles updates/reconnects in its own background tasks once connected
         await asyncio.gather(listener.run(), bot.start_polling())
+    except RuntimeError as e:
+        log.error("%s", e)  # startup errors carry their own hint (e.g. the login command)
+        return 2
     finally:
         await bot.close()
         await llm.close()

@@ -111,14 +111,10 @@ search-vac-tg/
 
 Everything runs on an Ubuntu VPS in Docker; the server needs only Docker and git. Step-by-step commands-only version (in Russian): [docs/QUICK_START.md](docs/QUICK_START.md). Server path: `/opt/search-vac-tg`, service name in `docker-compose.yml`: `search-vac-tg`.
 
-1. Docker and the code (get the repository URL on GitHub: Code button → SSH):
+1. Docker and the code:
    ```bash
    curl -fsSL https://get.docker.com | sudo sh
-   REPO_URL=
-   ```
-   Paste the copied URL after `REPO_URL=` and run:
-   ```bash
-   cd /opt && sudo git clone "$REPO_URL" search-vac-tg
+   cd /opt && sudo git clone https://github.com/Lightwell-bg/search-vac-tg.git
    cd /opt/search-vac-tg
    ```
 2. Secrets: `cp .env.example .env && nano .env`. See "Third-party services and API keys" below for where to get each key. Save in nano: Ctrl+O, Enter, Ctrl+X.
