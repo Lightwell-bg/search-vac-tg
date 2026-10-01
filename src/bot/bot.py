@@ -56,6 +56,7 @@ class NotifyBot:
                     BotCommand(command="channels", description="Каналы"),
                     BotCommand(command="profile", description="Профиль исполнителя"),
                     BotCommand(command="stats", description="Статистика"),
+                    BotCommand(command="journal", description="Журнал проверок"),
                     BotCommand(command="cancel", description="Отмена ввода")]
         try:
             if self.settings.owner_telegram_id is not None:

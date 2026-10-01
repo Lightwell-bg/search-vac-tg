@@ -20,6 +20,7 @@ from typing import Protocol
 
 from ..db.models import CONTACT_RESOLVING, Job, JobStatus
 from ..jev.classifier import JevClassifier
+from ..journal import cleanup_old
 from ..jev.schemas import ACCEPT, REJECT, REVIEW, JevDecision, JevError
 from ..llm.openrouter import OpenRouterClient
 from ..llm.schemas import LlmError, ReviewResult
@@ -116,6 +117,12 @@ class Pipeline:
         async with self._retry_lock:
             return await self._retry_pending()
 
+    async def cleanup_journal(self, days: int) -> dict[str, int]:
+        """Retention cleanup. Holds the dedup lock so no duplicate gets linked to a job that is
+        being deleted; jobs currently processed are skipped."""
+        async with self._dedup_lock:
+            return await cleanup_old(self.repo, days, in_progress=set(self._in_progress))
+
     async def flush_backlog(self) -> int:
         """Send everything held while notifications were paused; call right after unpausing.
         Repeats while full batches keep coming (retry_pending takes 50 jobs at a time)."""
@@ -166,7 +173,12 @@ class Pipeline:
         if not norm.text:  # media-only post; orphan recovery skips empty texts too
             log.info("RULE_REJECT %s/%s empty text", post.channel_username, post.message_id)
             return "empty"
-        async with self._dedup_lock:  # dedup + create must not interleave
+        async with self._dedup_lock:  # dedup + create must not interleave (cleanup holds it too)
+            if not await self.repo.message_row_exists(msg_row):
+                # deleted by retention cleanup after an orphan was selected: nothing to link
+                log.info("SKIP %s/%s: message row %s no longer exists", post.channel_username,
+                         post.message_id, msg_row)
+                return "gone"
             match = await self.dedup.find(norm.text_hash, norm.dedup_key)
             if match:
                 await self.repo.link_duplicate(match.job_id, msg_row, match.kind, match.similarity)
@@ -175,6 +187,8 @@ class Pipeline:
                 return "duplicate"
             job_id = await self.repo.create_job(msg_row, norm.text_hash, norm.text, norm.title,
                                                 norm.budget, dedup_key=norm.dedup_key)
+            if job_id is None:
+                return "gone"
         return await self._run(job_id, self._evaluate(job_id, post, norm.text, norm.contacts, rules))
 
     async def _run(self, job_id: int, coro) -> str:

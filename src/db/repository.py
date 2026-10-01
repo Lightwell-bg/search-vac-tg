@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import case, delete, func, or_, select, update
+from sqlalchemy.orm import aliased
 from sqlalchemy.exc import IntegrityError
 
+from src import journal as jr
 from src.db.database import Database
 from src.db.models import (
     Channel,
@@ -24,9 +27,21 @@ from src.db.models import (
 )
 
 
+STATS_ARCHIVE_KEY = "stats_archive"
+# additive counters moved into the archive when journal rows are deleted
+_ARCHIVE_COUNTERS = ("messages_received", "duplicates", "rule_rejects", "jev_processed", "jev_accepts",
+                     "jev_rejects", "jev_reviews", "jev_errors", "jev_fallbacks", "openrouter_calls",
+                     "openrouter_review_calls", "paid_contacts")
+_ARCHIVE_COSTS = ("jev_cost_usd", "openrouter_cost_usd")
+COUNTS_CACHE_TTL_SEC = 60.0
+_monotonic = time.monotonic   # patched in tests
+
+
 class Repository:
     def __init__(self, db: Database) -> None:
         self.db = db
+        # journal_counts cache: since-bucket -> (stored at, counts); cleared by cleanup
+        self._counts_cache: dict[Any, tuple[float, dict[str, int]]] = {}
 
     # ---- channels -------------------------------------------------------
     async def upsert_channel(self, tg_id: int, username: str, title: str | None, *,
@@ -124,6 +139,10 @@ class Repository:
             )
             return r.scalar_one_or_none() is not None
 
+    async def message_row_exists(self, row_id: int) -> bool:
+        async with self.db.session() as s:
+            return (await s.execute(select(Message.id).where(Message.id == row_id))).first() is not None
+
     async def save_message(self, **fields: Any) -> tuple[int, bool]:
         """Insert a message; returns (id, created). On unique-pair conflict returns the existing id."""
         async with self.db.session() as s:
@@ -167,8 +186,13 @@ class Repository:
         title: str | None,
         budget: str | None,
         dedup_key: str = "",
-    ) -> int:
+    ) -> int | None:
+        """Create a job for ``primary_message_id`` and link the message to it. Returns None
+        (nothing written) when that message no longer exists, e.g. removed by retention cleanup."""
         async with self.db.session() as s:
+            msg = await s.get(Message, primary_message_id)
+            if msg is None:
+                return None
             job = Job(
                 primary_message_id=primary_message_id,
                 text_hash=text_hash,
@@ -179,18 +203,16 @@ class Repository:
             )
             s.add(job)
             await s.flush()
-            msg = await s.get(Message, primary_message_id)
-            if msg is not None:
-                msg.job_id = job.id
-                s.add(
-                    JobSource(
-                        job_id=job.id,
-                        message_row_id=msg.id,
-                        channel_username=msg.channel_username,
-                        url=msg.url,
-                        match_kind="original",
-                    )
+            msg.job_id = job.id
+            s.add(
+                JobSource(
+                    job_id=job.id,
+                    message_row_id=msg.id,
+                    channel_username=msg.channel_username,
+                    url=msg.url,
+                    match_kind="original",
                 )
+            )
             await s.commit()
             return job.id
 
@@ -342,4 +364,202 @@ class Repository:
             )
             rows = (await s.execute(select(Job.status, func.count()).group_by(Job.status))).all()
             stats["jobs_by_status"] = {r[0]: int(r[1]) for r in rows}
+            # the detailed journal is trimmed by retention: "since" is where it starts
+            oldest = (await s.execute(select(func.min(Message.received_at)))).scalar_one_or_none()
+            stats["since"] = _aware(oldest) if oldest else None
+            # all-time = live rows + counters archived by cleanup
+            archive = _load_archive(await s.get(Setting, STATS_ARCHIVE_KEY))
+            for k in _ARCHIVE_COUNTERS:
+                stats[k] += int(archive.get(k, 0))
+            for k in _ARCHIVE_COSTS:
+                stats[k] += float(archive.get(k, 0.0))
+            for status, n in (archive.get("jobs_by_status") or {}).items():
+                stats["jobs_by_status"][status] = stats["jobs_by_status"].get(status, 0) + int(n)
             return stats
+
+    # ---- journal ---------------------------------------------------------
+    @staticmethod
+    def _kind_expr():
+        """SQL CASE giving every message (LEFT JOIN jobs) its journal kind."""
+        return case(
+            (Message.is_duplicate.is_(True), jr.KIND_DUP),
+            (Job.id.is_(None) & (Message.normalized_text == ""), jr.KIND_RULES),
+            (Job.status == JobStatus.NOTIFIED, jr.KIND_SENT),
+            (Job.status == JobStatus.RULE_REJECTED, jr.KIND_RULES),
+            (Job.status == JobStatus.JEV_REJECTED, jr.KIND_JEV),
+            (Job.status == JobStatus.FIT_REJECTED, jr.KIND_FIT),
+            (Job.status == JobStatus.PAID_SKIPPED, jr.KIND_PAID),
+            else_=jr.KIND_PENDING,
+        )
+
+    async def journal(self, since: datetime | None, kind: str = "all", limit: int = 10,
+                      offset: int = 0) -> list[jr.JournalEntry]:
+        """One entry per stored message, newest first. ``kind`` is one of journal.KINDS."""
+        if kind not in jr.KINDS:
+            raise ValueError(f"unknown journal kind: {kind!r}")
+        orig = aliased(Message)
+        kind_expr = self._kind_expr()
+        stmt = (
+            select(Message, Job, orig.url, kind_expr.label("kind"))
+            .select_from(Message)
+            .outerjoin(Job, Message.job_id == Job.id)
+            .outerjoin(orig, Job.primary_message_id == orig.id)
+            .order_by(Message.received_at.desc(), Message.id.desc())
+            .limit(max(0, int(limit))).offset(max(0, int(offset)))
+        )
+        if since is not None:
+            stmt = stmt.where(Message.received_at >= since)
+        if kind != jr.KIND_ALL:
+            stmt = stmt.where(kind_expr == kind)
+        async with self.db.session() as s:
+            rows = (await s.execute(stmt)).all()
+        out: list[jr.JournalEntry] = []
+        for msg, job, orig_url, k in rows:
+            is_dup = k == jr.KIND_DUP
+            entry = jr.JournalEntry(
+                message_row_id=msg.id,
+                received_at=_aware(msg.received_at),
+                channel_username=msg.channel_username,
+                url=(orig_url or msg.url) if is_dup else msg.url,
+                title=jr.make_title(job.title if job else None,
+                                    (job.normalized_text if job else None) or msg.normalized_text),
+                kind=k, reason="",
+                fit_score=job.fit_score if job else None,
+                route=job.route if job else None,
+                contact_status=job.contact_status if job else None,
+                job_id=job.id if job else None,
+                status=job.status if job else None,
+                decision_reason=job.decision_reason if job else None,
+                jev_result=job.jev_result if job else None,
+                llm_result=job.llm_result if job else None,
+            )
+            entry.reason = jr.describe(entry)
+            out.append(entry)
+        return out
+
+    async def journal_counts(self, since: datetime | None) -> dict[str, int]:
+        """Messages per kind (every kind present, plus ``all``). Cached for 60 s per
+        (since rounded to the minute) and cleared by cleanup, so paging does not rescan the table."""
+        key = None if since is None else int(since.timestamp() // 60)
+        hit = self._counts_cache.get(key)
+        if hit is not None and _monotonic() - hit[0] < COUNTS_CACHE_TTL_SEC:
+            return dict(hit[1])
+        counts = await self._journal_counts(since)
+        self._counts_cache[key] = (_monotonic(), counts)
+        return dict(counts)
+
+    async def _journal_counts(self, since: datetime | None) -> dict[str, int]:
+        kind_expr = self._kind_expr()
+        stmt = (select(kind_expr, func.count()).select_from(Message)
+                .outerjoin(Job, Message.job_id == Job.id).group_by(kind_expr))
+        if since is not None:
+            stmt = stmt.where(Message.received_at >= since)
+        async with self.db.session() as s:
+            rows = (await s.execute(stmt)).all()
+        counts = {k: 0 for k in jr.KINDS}
+        for k, n in rows:
+            counts[k] = int(n)
+        counts[jr.KIND_ALL] = sum(v for k, v in counts.items() if k != jr.KIND_ALL)
+        return counts
+
+    # ---- retention -------------------------------------------------------
+    async def delete_older_than(self, cutoff: datetime,
+                                protected_job_ids: set[int] | None = None) -> dict[str, int]:
+        """Delete journal rows older than ``cutoff`` in ONE transaction (see journal.cleanup_old).
+
+        A job is deleted only if it was created before the cutoff, none of its messages is
+        newer, it is not in a status of ``JobStatus.PROTECTED_FROM_CLEANUP`` / ``RETRYABLE``,
+        has no notification/feedback rows and is not in ``protected_job_ids``. Old messages go
+        with their deleted job or when they have no job; EVERY message (primary or duplicate)
+        of a surviving job is kept. The deleted rows' contribution to /stats is added to the
+        ``stats_archive`` setting in the same transaction."""
+        m2 = aliased(Message)
+        protected = list(protected_job_ids or ())
+        keep_conds = [
+            Job.status.in_(JobStatus.PROTECTED_FROM_CLEANUP),
+            Job.status.in_(JobStatus.RETRYABLE),
+            Job.id.in_(select(Notification.job_id)),
+            Job.id.in_(select(Feedback.job_id)),
+            Job.id.in_(select(m2.job_id).where(m2.received_at >= cutoff, m2.job_id.is_not(None))),
+        ]
+        if protected:
+            keep_conds.append(Job.id.in_(protected))
+        doomed = select(Job.id).where(Job.created_at < cutoff, ~or_(*keep_conds))
+        surviving = select(Job.id).where(Job.id.not_in(doomed))
+        old_msgs = select(Message.id).where(
+            Message.received_at < cutoff,
+            or_(Message.job_id.is_(None), Message.job_id.not_in(surviving)))
+        counts: dict[str, int] = {}
+        async with self.db.session() as s:
+            await self._archive_stats(s, doomed, old_msgs)
+            res = await s.execute(delete(JobSource).where(
+                or_(JobSource.job_id.in_(doomed), JobSource.message_row_id.in_(old_msgs))))
+            counts["job_sources"] = res.rowcount or 0
+            for name, model in (("contacts", Contact), ("jev_usage", JevUsage), ("llm_usage", LlmUsage)):
+                res = await s.execute(delete(model).where(model.job_id.in_(doomed)))
+                counts[name] = res.rowcount or 0
+            res = await s.execute(delete(Message).where(Message.id.in_(old_msgs)))
+            counts["messages"] = res.rowcount or 0
+            res = await s.execute(delete(Job).where(Job.id.in_(doomed)))
+            counts["jobs"] = res.rowcount or 0
+            await s.commit()
+        self._counts_cache.clear()
+        return counts
+
+    @staticmethod
+    async def _archive_stats(s, doomed, old_msgs) -> None:
+        """Add the contribution of the rows about to be deleted to the ``stats_archive`` setting
+        (same session, committed together with the delete)."""
+        async def count(model, *conds) -> int:
+            return int((await s.execute(select(func.count()).select_from(model).where(*conds))).scalar_one() or 0)
+
+        async def total(col, *conds) -> float:
+            q = select(func.coalesce(func.sum(col), 0.0)).where(*conds)
+            return float((await s.execute(q)).scalar_one() or 0.0)
+
+        jev_in, llm_in = JevUsage.job_id.in_(doomed), LlmUsage.job_id.in_(doomed)
+        add: dict[str, Any] = {
+            "messages_received": await count(Message, Message.id.in_(old_msgs)),
+            "duplicates": await count(Message, Message.id.in_(old_msgs), Message.is_duplicate.is_(True)),
+            "rule_rejects": await count(Job, Job.id.in_(doomed), Job.status == JobStatus.RULE_REJECTED),
+            "jev_processed": await count(JevUsage, jev_in, JevUsage.purpose == "job_classification"),
+            "jev_accepts": await count(JevUsage, jev_in, JevUsage.decision == "accept"),
+            "jev_rejects": await count(JevUsage, jev_in, JevUsage.decision == "reject"),
+            "jev_reviews": await count(JevUsage, jev_in, JevUsage.decision == "review"),
+            "jev_errors": await count(JevUsage, jev_in, JevUsage.error.is_not(None)),
+            "jev_fallbacks": await count(JevUsage, jev_in, JevUsage.fallback_used.is_(True)),
+            "openrouter_calls": await count(LlmUsage, llm_in),
+            "openrouter_review_calls": await count(LlmUsage, llm_in, LlmUsage.purpose == "job_review"),
+            "paid_contacts": await count(Job, Job.id.in_(doomed), Job.contact_status == "paid_contact"),
+            "jev_cost_usd": await total(JevUsage.cost_usd, jev_in),
+            "openrouter_cost_usd": await total(LlmUsage.cost_usd, llm_in),
+        }
+        by_status = (await s.execute(
+            select(Job.status, func.count()).where(Job.id.in_(doomed)).group_by(Job.status))).all()
+        row = await s.get(Setting, STATS_ARCHIVE_KEY)
+        archive = _load_archive(row)
+        for k, v in add.items():
+            archive[k] = archive.get(k, 0) + v
+        statuses = archive.setdefault("jobs_by_status", {})
+        for status, n in by_status:
+            statuses[status] = int(statuses.get(status, 0)) + int(n)
+        payload = json.dumps(archive, ensure_ascii=False)
+        if row is None:
+            s.add(Setting(key=STATS_ARCHIVE_KEY, value=payload))
+        else:
+            row.value = payload
+
+
+def _load_archive(row: Setting | None) -> dict[str, Any]:
+    if row is None:
+        return {}
+    try:
+        data = json.loads(row.value)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _aware(dt: datetime) -> datetime:
+    """SQLite returns naive datetimes; everything stored is UTC."""
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)

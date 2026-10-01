@@ -106,6 +106,11 @@ async def run() -> int:
         rs.apply_to(pipeline.opt, llm)
         if listener.poll_interval != rs.poll_interval_sec:
             listener.set_poll_interval(rs.poll_interval_sec)
+        if listener.retention_days != rs.log_retention_days:
+            listener.retention_days = rs.log_retention_days
+            t = asyncio.get_running_loop().create_task(listener.run_cleanup())  # apply the new period now
+            flush_tasks.add(t)
+            t.add_done_callback(flush_tasks.discard)
         was_paused, state["paused"] = state["paused"], rs.notifications_paused
         if was_paused and not rs.notifications_paused:
             # unpaused: send the held (ACCEPTED) backlog right away, no second contact click
@@ -115,6 +120,7 @@ async def run() -> int:
 
     runtime.apply_to(pipeline.opt, llm)
     listener.poll_interval = runtime.poll_interval_sec
+    listener.retention_days = runtime.log_retention_days
     runtime.subscribe(on_settings_change)
     try:
         await tg.start()

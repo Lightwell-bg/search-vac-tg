@@ -6,6 +6,7 @@ import logging
 import logging.handlers
 import os
 import sys
+from zoneinfo import ZoneInfo
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,6 +42,28 @@ def _ini_get(cfg: configparser.ConfigParser, section: str, key: str, cast, defau
         return cast(raw.strip())
     except ValueError as exc:
         raise ValueError(f"config.ini [{section}] {key} has invalid value {raw!r}") from exc
+
+
+def _valid_timezone(name: str) -> str:
+    """IANA name if zoneinfo knows it, otherwise UTC with a warning."""
+    try:
+        ZoneInfo(name)
+        return name
+    except Exception:  # ZoneInfoNotFoundError, ValueError, OSError
+        logging.getLogger("config").warning("unknown timezone %r in config.ini [ui], using UTC", name)
+        return "UTC"
+
+
+def _valid_retention(days: int, dedup_window: int) -> int:
+    """Clamp to [max(7, dedup window), max(365, dedup window)]: the journal must outlive the
+    dedup window, so the value is never below the minimum."""
+    lo, hi = max(7, dedup_window), max(365, dedup_window)
+    if not lo <= days <= hi:
+        clamped = min(max(days, lo), hi)
+        logging.getLogger("config").warning(
+            "journal retention_days=%s out of range %s..%s, using %s", days, lo, hi, clamped)
+        return clamped
+    return days
 
 
 def _resolve(path_str: str) -> Path:
@@ -104,6 +127,8 @@ class Settings:
     retry_interval_sec: int
     log_level: str
     log_file: Path
+    timezone: str = "Europe/Sofia"      # display timezone (config.ini [ui] timezone)
+    log_retention_days: int = 30        # initial journal retention (config.ini [journal])
 
     def missing_for_run(self) -> list[str]:
         """Names of variables required to run the monitor that are still empty."""
@@ -133,6 +158,7 @@ def load_settings(env_file: Path | None = None, ini_file: Path | None = None) ->
     env = os.environ.get
     openrouter_base_url = _ini_get(cfg, "openrouter", "base_url", str, "https://openrouter.ai/api/v1")
 
+    dedup_window = _ini_get(cfg, "dedup", "window_days", int, 14)
     db_url = (env("DATABASE_URL", "") or "").strip() or "sqlite:///data/app.db"
 
     def path(section: str, key: str, default: str) -> Path:
@@ -176,6 +202,8 @@ def load_settings(env_file: Path | None = None, ini_file: Path | None = None) ->
         retry_interval_sec=_ini_get(cfg, "pipeline", "retry_interval_sec", int, 600),
         log_level=_ini_get(cfg, "logging", "level", str, "INFO").upper(),
         log_file=path("logging", "file", "data/app.log"),
+        timezone=_valid_timezone(_ini_get(cfg, "ui", "timezone", str, "Europe/Sofia")),
+        log_retention_days=_valid_retention(_ini_get(cfg, "journal", "retention_days", int, 30), dedup_window),
     )
 
 

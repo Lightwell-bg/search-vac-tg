@@ -21,6 +21,8 @@ from telethon import errors, events
 from ..config import ChannelConfig
 from .client import ChannelLookupError, ChannelRef, TelegramService
 
+from ..journal import CLEANUP_INTERVAL_SEC
+
 log = logging.getLogger("listener")
 
 MAX_POST_ERRORS = 3  # consecutive "error" outcomes before a poison message is skipped
@@ -75,6 +77,8 @@ class ChannelListener:
         self._lock = asyncio.Lock()   # guards registry mutations
         self._tasks: set[asyncio.Task] = set()
         self._errors: dict[tuple[int, int], int] = {}
+        self.retention_days: int | None = None   # None: journal cleanup disabled
+        self._cleanup_lock = asyncio.Lock()
 
     # ------------------------------------------------------------- registry state
 
@@ -342,11 +346,28 @@ class ChannelListener:
         await self.setup()
         await self.run_loop()
 
+    async def run_cleanup(self) -> dict[str, int] | None:
+        """Delete journal data older than the retention period (serialized, never raises)."""
+        days = self.retention_days
+        fn = getattr(self.pipeline, "cleanup_journal", None)
+        if days is None or fn is None:
+            return None
+        async with self._cleanup_lock:
+            try:
+                return await fn(self.retention_days)  # re-read: the setting may have changed while waiting
+            except Exception:
+                log.exception("ERROR journal cleanup")
+                return None
+
     async def run_loop(self) -> None:
         """Poll/retry forever; ``setup()`` must have completed before."""
         loop = asyncio.get_running_loop()
         next_retry = loop.time() + self.retry_interval
+        next_cleanup = loop.time()
         while True:
+            if loop.time() >= next_cleanup:
+                await self.run_cleanup()
+                next_cleanup = loop.time() + CLEANUP_INTERVAL_SEC
             n = await self._poll_tracked()
             if n:
                 log.info("poll: %s new posts", n)

@@ -15,6 +15,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -50,6 +51,15 @@ class JobStatus:
 
     # NEW is included so a job interrupted by an unexpected exception/crash is resumed
     RETRYABLE = (NEW, JEV_UNAVAILABLE, LLM_ERROR, NOTIFY_ERROR, ACCEPTED, NOTIFYING)
+    # retention cleanup classification: every status must be in at least one of the three
+    # groups (a test enumerates them) so a new status cannot silently fall through
+    PROTECTED_FROM_CLEANUP = (NOTIFIED, NOTIFY_UNCERTAIN, NOTIFYING)   # card sent / maybe sent
+    DELETABLE = (RULE_REJECTED, JEV_REJECTED, FIT_REJECTED, PAID_SKIPPED, ERROR)  # final decisions
+
+    @classmethod
+    def all(cls) -> tuple[str, ...]:
+        """Every status value defined on this class."""
+        return tuple(v for k, v in vars(cls).items() if k.isupper() and isinstance(v, str))
 
 
 # contact_status value written before the resolver may press a button (durable claim):
@@ -82,7 +92,10 @@ class Setting(Base):
 
 class Message(Base):
     __tablename__ = "messages"
-    __table_args__ = (UniqueConstraint("channel_tg_id", "message_id", name="uq_channel_message"),)
+    __table_args__ = (
+        UniqueConstraint("channel_tg_id", "message_id", name="uq_channel_message"),
+        Index("ix_messages_received_id", "received_at", "id"),   # journal ORDER BY received_at DESC, id DESC
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     channel_tg_id: Mapped[int] = mapped_column(BigInteger, index=True)
@@ -90,7 +103,7 @@ class Message(Base):
     message_id: Mapped[int] = mapped_column(Integer)
     url: Mapped[str | None] = mapped_column(String(512))
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     original_text: Mapped[str] = mapped_column(Text, default="")
     normalized_text: Mapped[str] = mapped_column(Text, default="")
     buttons: Mapped[list] = mapped_column(JSON, default=list)       # [ButtonInfo.as_dict()]

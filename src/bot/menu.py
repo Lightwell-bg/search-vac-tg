@@ -11,7 +11,7 @@ import html
 import io
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +24,11 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from ..profile.service import ALLOWED_EXTENSIONS, MAX_UPLOAD_BYTES, parse_items
 from ..settings_store import POLL_INTERVALS, format_interval, parse_interval
+from ..timeutil import fmt_local
+from .journal_view import (
+    PAGE_SIZE, PERIODS, RETENTION_PROMPT, journal_keyboard, journal_text, page_count, parse_journal_callback,
+    retention_keyboard, retention_text,
+)
 from .stats_format import format_stats
 
 log = logging.getLogger("bot")
@@ -38,11 +43,12 @@ HELP_TEXT = (
     "/channels — список каналов\n"
     "/profile — профиль исполнителя (резюме, навыки)\n"
     "/stats — статистика работы\n"
+    "/journal — журнал проверок: что отправлено и почему отсеяно\n"
     "/cancel — отмена ввода\n"
     "Под карточкой заказа: 👍/👎 — обратная связь, ✍️ — черновик отклика "
     "(отправляете заказчику вы сами)."
 )
-CALLBACK_PREFIX = r"^(m|ch|th|pi|pf):"
+CALLBACK_PREFIX = r"^(m|ch|th|pi|pf|j|jr|tz):"
 
 
 class MenuStates(StatesGroup):
@@ -52,6 +58,8 @@ class MenuStates(StatesGroup):
     waiting_upload = State()
     waiting_add_skills = State()
     waiting_remove_skills = State()
+    waiting_retention = State()
+    waiting_timezone = State()
 
 
 def _e(value: Any) -> str:
@@ -66,7 +74,7 @@ def _btn(text: str, data: str) -> InlineKeyboardButton:
 def parse_menu_callback(data: str | None) -> tuple[str, ...] | None:
     """``ch:t:123`` -> ("ch", "t", "123"); ints are validated by the caller via ``to_int``."""
     parts = (data or "").split(":")
-    if not 2 <= len(parts) <= 3 or parts[0] not in ("m", "ch", "th", "pi", "pf"):
+    if not 2 <= len(parts) <= 3 or parts[0] not in ("m", "ch", "th", "pi", "pf", "jr", "tz"):
         return None
     return tuple(parts)
 
@@ -105,7 +113,29 @@ def main_keyboard(rs) -> InlineKeyboardMarkup:
         [_btn(paid, "m:paid"), _btn(pause, "m:pause")],
         [_btn("🤖 Модель", "m:md"), _btn("📊 Статистика", "m:st")],
         [_btn("⏱ Период проверки", "m:pi"), _btn("👤 Профиль", "m:pr")],
+        [_btn("📜 Журнал", "j:all:d:0")],
+        [_btn(f"🗑 Хранение журнала: {getattr(rs, 'log_retention_days', 30)} дн", "m:jr")],
+        [_btn(f"🕒 Часовой пояс: {getattr(rs, 'timezone', 'Europe/Sofia')}", "m:tz")],
     ])
+
+
+TIMEZONE_PRESETS = ("Europe/Sofia", "Europe/Moscow", "Europe/Kyiv", "Europe/Berlin", "UTC", "Asia/Almaty")
+TIMEZONE_PROMPT = "Пришлите имя часового пояса IANA, например Europe/Warsaw. /cancel — отмена"
+TIMEZONE_REMINDER = "Жду текст: имя часового пояса IANA, например Europe/Warsaw. /cancel — отмена"
+
+
+def timezone_text(rs) -> str:
+    return (f"🕒 Часовой пояс: {_e(getattr(rs, 'timezone', 'Europe/Sofia'))}\n"
+            f"По нему показывается время в журнале и на экране проверки каналов.")
+
+
+def timezone_keyboard(rs) -> InlineKeyboardMarkup:
+    cur = getattr(rs, "timezone", "Europe/Sofia")
+    btns = [_btn(("✅ " if name == cur else "") + name, f"tz:{i}") for i, name in enumerate(TIMEZONE_PRESETS)]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        btns[:2], btns[2:4], btns[4:],
+        [_btn("✏️ Своё (IANA, напр. Europe/Warsaw)", "tz:custom")],
+        [_btn("⬅️ Назад", "m:main")]])
 
 
 INTERVAL_PROMPT = ("Пришлите интервал: число минут (например 500) или с единицей: 90с, 30м, 2ч. "
@@ -113,18 +143,18 @@ INTERVAL_PROMPT = ("Пришлите интервал: число минут (н
 CHECK_TIMEOUT_SEC = 120
 
 
-def last_poll_line(listener) -> str:
+def last_poll_line(listener, tz: str = "Europe/Sofia") -> str:
     at = getattr(listener, "last_poll_at", None)
     if not isinstance(at, datetime):
         return "Последняя проверка: ещё не было"
     n = getattr(listener, "last_poll_new", 0)
-    return f"Последняя проверка: {at.astimezone(timezone.utc):%H:%M} UTC ({n} новых)"
+    return f"Последняя проверка: {fmt_local(at, tz, '%H:%M')} ({n} новых)"
 
 
 def interval_text(rs, listener=None) -> str:
     text = f"⏱ Как часто проверять каналы\nСейчас: каждые {format_interval(rs.poll_interval_sec)}"
     if listener is not None:
-        text += "\n" + last_poll_line(listener)
+        text += "\n" + last_poll_line(listener, getattr(rs, "timezone", "Europe/Sofia"))
     return text
 
 
@@ -300,6 +330,7 @@ class MenuHandlers:
         m.register(self.cmd_channels, Command("channels"))
         m.register(self.cmd_profile, Command("profile"))
         m.register(self.cmd_stats, Command("stats"))
+        m.register(self.cmd_journal, Command("journal"))
         m.register(self.cmd_cancel, Command("cancel"))
         m.register(self.on_channel_input, StateFilter(MenuStates.waiting_channel))
         m.register(self.on_model_input, StateFilter(MenuStates.waiting_model))
@@ -307,6 +338,8 @@ class MenuHandlers:
         m.register(self.on_upload_input, StateFilter(MenuStates.waiting_upload))
         m.register(self.on_add_skills_input, StateFilter(MenuStates.waiting_add_skills))
         m.register(self.on_remove_skills_input, StateFilter(MenuStates.waiting_remove_skills))
+        m.register(self.on_retention_input, StateFilter(MenuStates.waiting_retention))
+        m.register(self.on_timezone_input, StateFilter(MenuStates.waiting_timezone))
         router.callback_query.register(self.on_callback, F.data.regexp(CALLBACK_PREFIX))
 
     # -- helpers
@@ -387,7 +420,70 @@ class MenuHandlers:
 
     async def cmd_stats(self, message: Message, state: FSMContext | None = None) -> None:
         await self._clear(state)
-        await message.answer(format_stats(await self.repo.get_stats()), parse_mode=None)
+        await message.answer(format_stats(await self.repo.get_stats(), self._tz()), parse_mode=None)
+
+    def _tz(self) -> str:
+        return getattr(self.runtime_settings, "timezone", "Europe/Sofia")
+
+    async def cmd_journal(self, message: Message, state: FSMContext | None = None) -> None:
+        await self._clear(state)
+        text, kb = await self._journal_screen("all", "d", 0)
+        await message.answer(text, reply_markup=kb, parse_mode="HTML",
+                             link_preview_options=LinkPreviewOptions(is_disabled=True))
+
+    async def _journal_screen(self, kind: str, period: str, page: int):
+        """Text + keyboard for one journal page (page is clamped to the existing range)."""
+        now = datetime.now(timezone.utc)
+        c24 = await self.repo.journal_counts(since=now - timedelta(hours=24))
+        hours = PERIODS[period][1]
+        since = now - timedelta(hours=hours) if hours else None
+        counts = c24 if period == "d" else await self.repo.journal_counts(since=since)
+        pages = page_count(counts.get(kind, 0))
+        page = min(max(0, page), pages - 1)
+        entries = await self.repo.journal(since=since, kind=kind, limit=PAGE_SIZE, offset=page * PAGE_SIZE)
+        return journal_text(entries, c24, kind, period, page, pages, self._tz()), journal_keyboard(kind, period, page, pages)
+
+    async def _show_journal(self, cb: CallbackQuery, kind: str, period: str, page: int) -> None:
+        text, kb = await self._journal_screen(kind, period, page)
+        await self._edit(cb, text, kb)
+
+    async def on_retention_input(self, message: Message, state: FSMContext | None = None) -> None:
+        rs = self.runtime_settings
+        if rs is None:
+            await self._clear(state)
+            await message.answer(UNAVAILABLE, parse_mode=None)
+            return
+        text = (message.text or "").strip()
+        if not text:
+            await message.answer(RETENTION_PROMPT, parse_mode=None)
+            return
+        try:
+            await rs.set("log_retention_days", int(text))
+        except ValueError as e:
+            await message.answer(f"{e}\nПопробуйте ещё раз или /cancel", parse_mode=None)
+            return
+        await self._clear(state)
+        await message.answer(f"✅ Хранение журнала: {rs.log_retention_days} дн", parse_mode=None)
+        await message.answer(retention_text(rs), reply_markup=retention_keyboard(rs), parse_mode="HTML")
+
+    async def on_timezone_input(self, message: Message, state: FSMContext | None = None) -> None:
+        rs = self.runtime_settings
+        if rs is None:
+            await self._clear(state)
+            await message.answer(UNAVAILABLE, parse_mode=None)
+            return
+        text = (message.text or "").strip()
+        if not text:
+            await message.answer(TIMEZONE_REMINDER, parse_mode=None)
+            return
+        try:
+            await rs.set("timezone", text)
+        except ValueError as e:
+            await message.answer(f"{e}\nПопробуйте ещё раз или /cancel", parse_mode=None)
+            return
+        await self._clear(state)
+        await message.answer(f"✅ Часовой пояс: {rs.timezone}", parse_mode=None)
+        await message.answer(timezone_text(rs), reply_markup=timezone_keyboard(rs), parse_mode="HTML")
 
     async def cmd_cancel(self, message: Message, state: FSMContext | None = None) -> None:
         await self._clear(state)
@@ -519,6 +615,9 @@ class MenuHandlers:
     # -- callbacks
 
     async def on_callback(self, cb: CallbackQuery, state: FSMContext | None = None) -> None:
+        if (cb.data or "").startswith("j:"):
+            await self._on_journal(cb, state)
+            return
         parts = parse_menu_callback(cb.data)
         if parts is None:
             await cb.answer()
@@ -534,6 +633,10 @@ class MenuHandlers:
                 await self._on_channel(cb, state, action, arg)
             elif kind == "pf":
                 await self._on_profile(cb, state, action, arg)
+            elif kind == "jr":
+                await self._on_retention(cb, state, action, rs)
+            elif kind == "tz":
+                await self._on_timezone(cb, state, action, rs)
             elif kind == "pi":
                 await self._on_interval(cb, state, action, rs)
             else:
@@ -551,7 +654,8 @@ class MenuHandlers:
 
     async def _on_menu(self, cb: CallbackQuery, state, action: str, rs) -> None:
         if action == "st":
-            await self._edit(cb, format_stats(await self.repo.get_stats()), back_keyboard(), html_mode=False)
+            await self._edit(cb, format_stats(await self.repo.get_stats(), self._tz()), back_keyboard(),
+                             html_mode=False)
             await cb.answer()
             return
         if action == "ch":
@@ -575,6 +679,10 @@ class MenuHandlers:
             await self._show_profile(cb)
         elif action == "pi":
             await self._edit(cb, interval_text(rs, self.listener), interval_keyboard(rs))
+        elif action == "jr":
+            await self._edit(cb, retention_text(rs), retention_keyboard(rs))
+        elif action == "tz":
+            await self._edit(cb, timezone_text(rs), timezone_keyboard(rs))
         elif action == "md":
             if state is not None:
                 await state.set_state(MenuStates.waiting_model)
@@ -588,6 +696,62 @@ class MenuHandlers:
                 await cb.answer(str(e)[:200], show_alert=True)
                 return
             await self._show_main(cb, rs)
+        await cb.answer()
+
+    async def _on_journal(self, cb: CallbackQuery, state) -> None:
+        await self._clear(state)
+        parsed = parse_journal_callback(cb.data) or ("all", "d", 0)
+        try:
+            await self._show_journal(cb, *parsed)
+            await cb.answer()
+        except Exception:  # noqa: BLE001
+            log.exception("journal callback failed: %s", cb.data)
+            await cb.answer("Ошибка, попробуйте ещё раз", show_alert=True)
+
+    async def _on_retention(self, cb: CallbackQuery, state, action: str, rs) -> None:
+        if rs is None:
+            await cb.answer(UNAVAILABLE, show_alert=True)
+            return
+        if action == "custom":
+            if state is not None:
+                await state.set_state(MenuStates.waiting_retention)
+            await self._edit(cb, RETENTION_PROMPT, InlineKeyboardMarkup(inline_keyboard=[[_btn("⬅️ Назад", "m:jr")]]),
+                             html_mode=False)
+            await cb.answer()
+            return
+        days = to_int(action)
+        if days is None:
+            await cb.answer()
+            return
+        try:
+            await rs.set("log_retention_days", days)
+        except ValueError as e:
+            await cb.answer(str(e)[:200], show_alert=True)
+            return
+        await self._edit(cb, retention_text(rs), retention_keyboard(rs))
+        await cb.answer()
+
+    async def _on_timezone(self, cb: CallbackQuery, state, action: str, rs) -> None:
+        if rs is None:
+            await cb.answer(UNAVAILABLE, show_alert=True)
+            return
+        if action == "custom":
+            if state is not None:
+                await state.set_state(MenuStates.waiting_timezone)
+            await self._edit(cb, TIMEZONE_PROMPT, InlineKeyboardMarkup(inline_keyboard=[[_btn("⬅️ Назад", "m:tz")]]),
+                             html_mode=False)
+            await cb.answer()
+            return
+        idx = to_int(action)
+        if idx is None or not 0 <= idx < len(TIMEZONE_PRESETS):
+            await cb.answer()
+            return
+        try:
+            await rs.set("timezone", TIMEZONE_PRESETS[idx])
+        except ValueError as e:
+            await cb.answer(str(e)[:200], show_alert=True)
+            return
+        await self._edit(cb, timezone_text(rs), timezone_keyboard(rs))
         await cb.answer()
 
     async def _on_profile(self, cb: CallbackQuery, state, action: str, arg: str | None) -> None:

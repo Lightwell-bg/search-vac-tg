@@ -300,7 +300,8 @@ def test_interval_text_formats_and_last_poll():
     rs = rs_fake(poll_interval_sec=500 * 60)
     assert "каждые 8 ч 20 мин" in interval_text(rs)
     lst = SimpleNamespace(last_poll_at=datetime(2026, 10, 1, 14, 5, tzinfo=timezone.utc), last_poll_new=3)
-    assert "Последняя проверка: 14:05 UTC (3 новых)" in interval_text(rs, lst)
+    rs.timezone = "Europe/Sofia"  # EEST, UTC+3
+    assert "Последняя проверка: 17:05 (3 новых)" in interval_text(rs, lst)
     assert "каждые 90 с" in main_text(rs_fake(poll_interval_sec=90), CHS)
 
 

@@ -26,7 +26,8 @@ async def test_defaults_from_env(repo):
     rs = await RuntimeSettings.load(repo, env(notify_score=70, show_paid_contact=True))
     assert rs.as_dict() == {"notify_score": 70, "high_fit_score": 80, "show_paid_contact": True,
                             "notifications_paused": False, "openrouter_model": "a/b",
-                            "poll_interval_sec": 120}
+                            "poll_interval_sec": 120, "log_retention_days": 30,
+                            "timezone": "Europe/Sofia"}
 
 
 async def test_db_overrides_env(repo):

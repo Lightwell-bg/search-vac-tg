@@ -17,6 +17,13 @@ _ADDED_COLUMNS = (
 )
 
 
+# (index name, table, column): created with IF NOT EXISTS because create_all skips existing tables
+_ADDED_INDEXES = (
+    ("ix_messages_received_at", "messages", "received_at"),
+    ("ix_messages_received_id", "messages", "received_at, id"),
+)
+
+
 def _migrate(conn) -> None:  # noqa: ANN001
     """Lightweight in-place migration: add missing columns (idempotent, keeps all rows)."""
     if conn.dialect.name != "sqlite":
@@ -25,6 +32,8 @@ def _migrate(conn) -> None:  # noqa: ANN001
         cols = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
         if cols and column not in cols:
             conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+    for name, table, column in _ADDED_INDEXES:
+        conn.exec_driver_sql(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({column})")
 
 
 class Database:

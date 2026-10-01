@@ -425,6 +425,18 @@ Changes apply immediately (no restart): JEV, OpenRouter and reply drafts use the
 
 How the layers work: the **base profile** `data/profile.json` comes from the repo (built locally from your portfolio) and is never changed by the bot. Uploaded files are stored in `data/materials_uploads/`, the profile derived only from them is cached in `data/profile_uploads.json`, manual changes are in `data/profile_overrides.json`. The effective profile = base + uploads, then manual add/remove. All these files live in `data/` on the server, so **back up `data/`** together with the database. They are git-ignored, so `git pull` does not touch them.
 
+### Journal (from the bot)
+
+`/journal` (or "📜 Journal" in `/menu`) is one message edited in place: a header with 24-hour counters (total, sent, rejected by rules, by JEV, by fit score, paid contact, duplicates, in progress), then the current filter and period, then 10 entries per page, newest first. Each entry is two lines: emoji, local time, `@channel`, title (a link to the post) and, below, the reason (for example "score 41 < 60", "JEV: not a fit (confidence 0.92)", "duplicate of job #12").
+
+- **Filters**: All, Sent, Rejected by rules, Rejected by JEV, Fit score too low, Paid contact, Duplicates, In progress / errors (the current one is marked with •).
+- **Period**: 24 h / 7 days / all time; pagination with ◀️ ▶️; "🔄 Refresh".
+- **Retention** ("🗑 Journal retention: N d" in `/menu` or "⚙️ Retention" under the journal): presets 14/30/60/90/180/365 days or a custom number of days. The minimum is the duplicate-detection window (presets below it are hidden). Applies live; old records are cleaned up every 6 hours.
+- **Never deleted**: jobs that were sent to you and jobs with 👍/👎 feedback (with their source messages, contacts, notifications and feedback), jobs still being retried, channels and settings.
+- **Retention bounds**: minimum `max(7, dedup window_days)`, maximum `max(365, dedup window_days)`; a value from `config.ini [journal]` outside the range is logged as a warning and replaced by the nearest bound. Jobs in `notified`, `notify_uncertain`, `notifying` and every retryable status are never deleted, and a kept job keeps ALL its source messages (reposts too).
+- **Timezone** ("🕒 Timezone: Europe/Sofia" in `/menu`): presets Europe/Sofia, Europe/Moscow, Europe/Kyiv, Europe/Berlin, UTC, Asia/Almaty or your own IANA name (e.g. Europe/Warsaw). Stored in the DB, applies live to the journal, the check-interval screen and `/stats`; `config.ini [ui] timezone` is only the initial default.
+- **Performance**: an index on `messages(received_at, id)` is created automatically on start; journal counters are cached for 60 s (reset on cleanup). Pages use OFFSET, which is fine for a single-owner journal of this size (documented trade-off).
+
 ## Profile
 
 The profile is built from your materials and used for JEV/OpenRouter decisions and reply drafts.
@@ -439,7 +451,7 @@ The profile is built from your materials and used for JEV/OpenRouter decisions a
 
 ## Stats and savings
 
-`/stats` in the bot or `sudo docker compose exec search-vac-tg python scripts/stats.py` shows: messages received, duplicates, rule rejects, JEV processed / accepts / rejects / reviews / errors (and fallbacks), OpenRouter calls (review / other), notifications, skipped paid contacts, feedback, estimated JEV and OpenRouter cost, jobs by status. The savings line "OpenRouter вызван для N из M прошедших правила (X% сэкономлено)" shows how many jobs JEV settled without the expensive model.
+`/stats` in the bot or `sudo docker compose exec search-vac-tg python scripts/stats.py` shows: messages received, duplicates, rule rejects, JEV processed / accepts / rejects / reviews / errors (and fallbacks), OpenRouter calls (review / other), notifications, skipped paid contacts, feedback, estimated JEV and OpenRouter cost, jobs by status. Counters are all-time: when old journal rows are cleaned up, their contribution is moved into an archive, so the totals do not drop; the last line shows the date since which the detailed journal is kept (in your timezone). The savings line "OpenRouter вызван для N из M прошедших правила (X% сэкономлено)" shows how many jobs JEV settled without the expensive model.
 
 ## Safety
 

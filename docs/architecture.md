@@ -69,6 +69,12 @@ Tables are created on start (`create_all`); there are no migrations.
 4. Channels: the bot calls `ChannelListener.add_channel / set_enabled / set_click / remove_channel`. `channels.yaml` only seeds rows the first time a channel appears; removed channels are remembered in `settings` and never re-seeded. Only public channels are added; the account never joins.
 5. After the first change from the bot the DB value overrides `.env`; `.env` and `channels.yaml` are initial defaults only.
 
+## Journal and cleanup (`src/journal.py`, `src/bot/journal_view.py`)
+
+- The journal has no table of its own: one entry per stored `messages` row, LEFT JOIN `jobs`. `Repository.journal` / `journal_counts` classify each row into a kind (sent, rules, jev, fit, paid, dup, pending) with one SQL `CASE`; `journal.describe` builds the Russian reason from `decision_reason`, `jev_result`, `llm_result`.
+- Bot UI: `/journal` and `j:<kind>:<period>:<page>` callbacks edit one message in place (10 entries per page, text trimmed to 4096, all untrusted strings HTML-escaped, links only for http(s)/t.me). Retention screen: `m:jr`, `jr:<days>`, `jr:custom` (FSM `waiting_retention`).
+- Cleanup: the listener runs `journal.cleanup_old(repo, log_retention_days)` every 6 hours (`CLEANUP_INTERVAL_SEC`) in one transaction. Kept: notified jobs, jobs with feedback, jobs in a retryable status or in progress (with messages, sources, contacts, notifications, feedback); channels and settings are never touched. `log_retention_days` is a runtime setting with a minimum of the dedup window (`retention_min`).
+
 ## Profile layers (`src/profile/service.py`)
 
 - BASE: `data/profile.json` (committed, built locally by `scripts/rebuild_profile.py`; the bot never writes it).

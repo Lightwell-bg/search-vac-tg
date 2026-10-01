@@ -9,3 +9,4 @@ pyyaml>=6.0
 rapidfuzz>=3.9
 pypdf>=5.0
 python-docx>=1.1
+tzdata>=2024.1

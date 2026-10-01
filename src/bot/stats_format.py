@@ -1,14 +1,20 @@
 """Plain-text statistics report shared by the /stats bot command and scripts/stats.py."""
 from __future__ import annotations
 
+from datetime import datetime
 
-def format_stats(stats: dict) -> str:
+from ..timeutil import fmt_local
+
+
+def format_stats(stats: dict, tz: str = "Europe/Sofia") -> str:
+    """All-time counters (live rows + archive of cleaned-up ones); ``tz`` formats the 'since' date."""
     g = lambda k: int(stats.get(k) or 0)  # noqa: E731
     jev_processed = g("jev_processed")
     review_calls = g("openrouter_review_calls")
     other_calls = max(0, g("openrouter_calls") - review_calls)
     lines = [
         "Статистика",
+        "Итого за всё время",
         f"Messages received: {g('messages_received')}",
         f"Duplicates: {g('duplicates')}",
         f"Rule rejects: {g('rule_rejects')}",
@@ -36,4 +42,7 @@ def format_stats(stats: dict) -> str:
         lines.append("Jobs by status:")
         for status, n in sorted(by_status.items(), key=lambda kv: -kv[1]):
             lines.append(f"  {status}: {n}")
+    since = stats.get("since")
+    if isinstance(since, datetime):
+        lines.append(f"Подробный журнал хранится с {fmt_local(since, tz, '%d.%m.%Y')}")
     return "\n".join(lines)
