@@ -19,7 +19,10 @@ One process (`python -m src.main`), one asyncio event loop:
 | scorer | `src/filtering/scorer.py` | final fit score and decision |
 | ContactResolver | `src/telegram/contact_resolver.py` | contact for accepted jobs, paid-contact detection |
 | Repository / Database | `src/db/` | SQLite (WAL) through SQLAlchemy async |
-| NotifyBot | `src/bot/` | aiogram: cards, feedback, reply drafts; owner only. `menu.py`: `/menu`, `/channels`, `/stats`, `/cancel`, FSM (MemoryStorage) for adding a channel and changing the model |
+| NotifyBot | `src/bot/` | aiogram: cards, feedback, reply drafts; owner only. `menu.py`: `/start` and `/help` (welcome text), `/menu` (status dashboard), settings submenu (`m:set`), backups screen, `/channels`, `/profile`, `/stats`, `/journal`, `/cancel`, FSM (MemoryStorage) for adding a channel and changing the model |
+| Health | `src/health.py` | writes `data/heartbeat.json` every minute (`heartbeat_loop`); `python -m src.health check` is the Docker HEALTHCHECK (stale file or no finished poll = unhealthy); the same loop raises the `poll_failing` alert after 3 failed poll cycles |
+| Alerter | `src/alerts.py` | short messages to the owner (start/stop, poll failing, JEV/OpenRouter error bursts, backup failed, DB integrity); per-kind cooldown, never raises, on/off via the runtime setting `alerts_enabled` |
+| BackupService | `src/backup.py` | daily (`[backup] hour`, local time) and manual backups of the SQLite DB (online copy) and the Telegram session into `data/backups`, rotation by `backup_keep`; restore with `scripts/restore_backup.py`; the bot menu (`m:bk`, `bk:*`) uses `backup_now()` / `list()` |
 | RuntimeSettings | `src/settings_store.py` | settings editable from the bot, stored in the `settings` table, validated and pushed to live objects |
 
 ## Data flow

@@ -69,6 +69,11 @@ class ChannelListener:
         self.retry_interval = retry_interval_sec
         self.last_poll_at: datetime | None = None  # UTC, set after each finished poll
         self.last_poll_new: int = 0
+        self.last_success_poll_at: datetime | None = None  # UTC, last cycle that was not all-failed
+        self.poll_failures: int = 0               # consecutive failed poll cycles (0 after a good one)
+        self.last_poll_error: str | None = None    # text of the last channel error
+        self._cycle_attempted = 0
+        self._cycle_failed = 0
         self._polling = False
         self._poll_done = asyncio.Event()  # set (and replaced) when the next poll finishes
         self.refs: list[ChannelRef] = []
@@ -271,6 +276,7 @@ class ChannelListener:
 
     async def poll_once(self) -> int:
         processed = 0
+        self._cycle_attempted = self._cycle_failed = 0
         try:
             await self._load_state()
         except Exception:
@@ -278,6 +284,7 @@ class ChannelListener:
         for ref in list(self.refs):
             if ref.peer_id not in self._enabled:
                 continue
+            self._cycle_attempted += 1
             try:
                 last = await self.repo.get_last_message_id(ref.peer_id)
                 for msg in await self.tg.fetch_new(ref, last, self.catchup_limit):
@@ -304,7 +311,9 @@ class ChannelListener:
                     # "failed" is stored (retry_pending recovers it), so the cursor moves on
                     await self.repo.set_last_message_id(ref.peer_id, msg.id)
                     processed += 1
-            except Exception:
+            except Exception as e:
+                self._cycle_failed += 1
+                self.last_poll_error = f"@{ref.username}: {type(e).__name__}: {e}"
                 log.exception("ERROR polling @%s", ref.username)
         return processed
 
@@ -338,6 +347,13 @@ class ChannelListener:
             self._polling = False
         self.last_poll_at = datetime.now(timezone.utc)
         self.last_poll_new = n
+        # a cycle failed when every channel it tried raised (one broken channel is not an outage)
+        if self._cycle_attempted and self._cycle_failed == self._cycle_attempted:
+            self.poll_failures += 1
+        else:
+            self.last_success_poll_at = self.last_poll_at  # the healthcheck watches this one
+            self.poll_failures = 0
+            self.last_poll_error = None
         done, self._poll_done = self._poll_done, asyncio.Event()
         done.set()
         return n

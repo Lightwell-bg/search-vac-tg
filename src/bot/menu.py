@@ -22,6 +22,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions, Message
 
+from .. import __version__
 from ..profile.service import ALLOWED_EXTENSIONS, MAX_UPLOAD_BYTES, parse_items
 from ..settings_store import POLL_INTERVALS, format_interval, parse_interval
 from ..timeutil import fmt_local
@@ -36,19 +37,31 @@ log = logging.getLogger("bot")
 MODEL_EXAMPLE = "google/gemini-2.5-flash-lite"
 MODELS_URL = "https://openrouter.ai/models"
 UNAVAILABLE = "Недоступно: управление настройками не подключено"
-NEED_TEXT = "Нужен текст: @username или ссылка"
-HELP_TEXT = (
-    "Бот присылает подходящие заказы из публичных Telegram-каналов.\n"
-    "/menu — меню: каналы, пороги, пауза, модель\n"
-    "/channels — список каналов\n"
-    "/profile — профиль исполнителя (резюме, навыки)\n"
-    "/stats — статистика работы\n"
-    "/journal — журнал проверок: что отправлено и почему отсеяно\n"
-    "/cancel — отмена ввода\n"
-    "Под карточкой заказа: 👍/👎 — обратная связь, ✍️ — черновик отклика "
-    "(отправляете заказчику вы сами)."
+NEED_TEXT = "Нужен текст: @username или ссылка. /cancel — отмена"
+WELCOME_TEXT = (
+    "👋 <b>Привет! Я ищу заказы в Telegram-каналах</b>\n"
+    "\n"
+    "Слежу за публичными каналами, отбираю посты о заказах (правила + JEV + OpenRouter) "
+    "и присылаю подходящие карточкой.\n"
+    "\n"
+    "📇 <b>Что на карточке</b>\n"
+    "🔗 Открыть — исходный пост\n"
+    "👤 Контакт — ссылка на заказчика или текст контакта\n"
+    "👍 Подходит / 👎 Мимо — ваш отзыв сохраняется в базе; на отбор он пока не влияет, "
+    "только копится для разбора\n"
+    "✍️ Сделать отклик — черновик отклика (заказчику отправляете вы сами)\n"
+    "\n"
+    "⌨️ <b>Команды</b>\n"
+    "/menu — главное меню и статус\n"
+    "/channels — каналы\n"
+    "/profile — профиль исполнителя\n"
+    "/stats — статистика\n"
+    "/journal — журнал: что отправлено и почему отсеяно\n"
+    "/help — эта справка\n"
+    "/cancel — отмена ввода"
 )
-CALLBACK_PREFIX = r"^(m|ch|th|pi|pf|j|jr|tz):"
+CALLBACK_PREFIX = r"^(m|ch|th|pi|pf|j|jr|tz|bk):"
+MAX_ERROR_CHARS = 300
 
 
 class MenuStates(StatesGroup):
@@ -74,7 +87,7 @@ def _btn(text: str, data: str) -> InlineKeyboardButton:
 def parse_menu_callback(data: str | None) -> tuple[str, ...] | None:
     """``ch:t:123`` -> ("ch", "t", "123"); ints are validated by the caller via ``to_int``."""
     parts = (data or "").split(":")
-    if not 2 <= len(parts) <= 3 or parts[0] not in ("m", "ch", "th", "pi", "pf", "jr", "tz"):
+    if not 2 <= len(parts) <= 3 or parts[0] not in ("m", "ch", "th", "pi", "pf", "jr", "tz", "bk"):
         return None
     return tuple(parts)
 
@@ -93,29 +106,140 @@ def channel_label(ch: dict) -> str:
 # ------------------------------------------------------------------ builders
 
 
-def main_text(rs, channels: list[dict] | None) -> str:
+def _tz_of(rs) -> str:
+    return getattr(rs, "timezone", "Europe/Sofia")
+
+
+def _int_attr(obj: Any, name: str) -> int:
+    value = getattr(obj, name, 0)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _clip(text: Any, limit: int) -> str:
+    s = " ".join(str(text or "").split())
+    return s if len(s) <= limit else s[:max(0, limit - 1)] + "…"
+
+
+def main_text(rs, channels: list[dict] | None, listener=None, backup: dict | None = None) -> str:
+    """Status dashboard. ``backup`` is ``{"last_at": datetime | None, "keep": int}`` or None (unavailable)."""
+    tz = _tz_of(rs)
     state = "⏸ Уведомления на паузе" if rs.notifications_paused else "▶️ Уведомления включены"
     paid = "показывать" if rs.show_paid_contact else "скрывать"
-    active = sum(1 for c in (channels or []) if c.get("enabled"))
-    return (f"{state}\n"
-            f"Порог {rs.notify_score} / высокий {rs.high_fit_score}\n"
-            f"Платные контакты: {paid}\n"
-            f"Модель: <code>{_e(rs.openrouter_model)}</code>\n"
-            f"⏱ Проверка каналов: каждые {format_interval(rs.poll_interval_sec)}\n"
-            f"Каналов: {active} активных")
+    chs = channels or []
+    active = sum(1 for c in chs if c.get("enabled"))
+    at = getattr(listener, "last_poll_at", None)
+    if isinstance(at, datetime):
+        last = f"последняя в {fmt_local(at, tz, '%H:%M')}, новых {_int_attr(listener, 'last_poll_new')}"
+    else:
+        last = "последняя: ещё не было"
+    lines = [
+        f"🤖 <b>Поиск заказов</b> · v{_e(__version__)}",
+        "",
+        state,
+        f"📡 Каналы: {active} активных из {len(chs)}",
+        f"⏱ Проверка каждые {format_interval(rs.poll_interval_sec)} · {last}",
+    ]
+    failures = _int_attr(listener, "poll_failures")
+    if failures > 0:
+        err = getattr(listener, "last_poll_error", None)
+        lines.append(f"⚠️ Сбоев опроса подряд: {failures}" + (f" — {_e(_clip(err, 150))}" if err else ""))
+    if backup is None:
+        lines.append("💾 Бэкап: недоступен")
+    else:
+        when = fmt_local(backup["last_at"], tz) if isinstance(backup.get("last_at"), datetime) else "ещё не было"
+        lines.append(f"💾 Бэкап: {when} · хранится {backup.get('keep', 0)}")
+    lines.append("🔔 Оповещения о сбоях: " + ("вкл" if getattr(rs, "alerts_enabled", True) else "выкл"))
+    lines += [
+        "",
+        f"🎯 Порог {rs.notify_score} · 🔥 высокий {rs.high_fit_score}",
+        f"💰 Платные контакты: {paid}",
+        f"🧠 Модель: <code>{_e(rs.openrouter_model)}</code>",
+        f"🕒 Часовой пояс: {_e(tz)}",
+    ]
+    return "\n".join(lines)
 
 
 def main_keyboard(rs) -> InlineKeyboardMarkup:
-    paid = "💰 Платные: вкл" if rs.show_paid_contact else "💰 Платные: выкл"
     pause = "▶️ Продолжить" if rs.notifications_paused else "⏸ Пауза"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [_btn("📡 Каналы", "m:ch"), _btn("🎯 Пороги", "m:th")],
-        [_btn(paid, "m:paid"), _btn(pause, "m:pause")],
-        [_btn("🤖 Модель", "m:md"), _btn("📊 Статистика", "m:st")],
-        [_btn("⏱ Период проверки", "m:pi"), _btn("👤 Профиль", "m:pr")],
-        [_btn("📜 Журнал", "j:all:d:0")],
+        [_btn("📜 Журнал", "j:all:d:0"), _btn("📊 Статистика", "m:st")],
+        [_btn("🔄 Проверить сейчас", "m:now"), _btn(pause, "m:pause")],
+        [_btn("📡 Каналы", "m:ch"), _btn("👤 Профиль", "m:pr")],
+        [_btn("⚙️ Настройки", "m:set")],
+    ])
+
+
+SETTINGS_TEXT = (
+    "⚙️ <b>Настройки</b>\n"
+    "\n"
+    "🎯 Пороги — с какой оценки присылать заказ и что считать отличным\n"
+    "🧠 Модель — какая модель OpenRouter разбирает спорные заказы\n"
+    "⏱ Период проверки — как часто смотреть каналы\n"
+    "💰 Платные — показывать ли заказы с платным контактом\n"
+    "🗑 Хранение журнала — сколько дней держать проверенные посты\n"
+    "🕒 Часовой пояс — по нему показывается время в боте\n"
+    "💾 Бэкапы — копии базы и сессии на сервере\n"
+    "🔔 Оповещения — сообщения о запуске и сбоях"
+)
+
+
+def settings_text(rs=None) -> str:
+    return SETTINGS_TEXT
+
+
+def settings_keyboard(rs) -> InlineKeyboardMarkup:
+    paid = "💰 Платные: вкл" if rs.show_paid_contact else "💰 Платные: выкл"
+    alerts = "🔔 Оповещения: вкл" if getattr(rs, "alerts_enabled", True) else "🔔 Оповещения: выкл"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_btn("🎯 Пороги", "m:th"), _btn("🧠 Модель", "m:md")],
+        [_btn("⏱ Период проверки", "m:pi"), _btn(paid, "m:paid")],
         [_btn(f"🗑 Хранение журнала: {getattr(rs, 'log_retention_days', 30)} дн", "m:jr")],
-        [_btn(f"🕒 Часовой пояс: {getattr(rs, 'timezone', 'Europe/Sofia')}", "m:tz")],
+        [_btn(f"🕒 Часовой пояс: {_tz_of(rs)}", "m:tz")],
+        [_btn("💾 Бэкапы", "m:bk"), _btn(alerts, "m:al")],
+        [_btn("⬅️ Назад", "m:main")],
+    ])
+
+
+# ------------------------------------------------------------------ backups screen
+
+
+def backup_text(rs, service, db_backups: list | None = None, note: str | None = None) -> str:
+    """``db_backups`` is ``[(path, size, mtime_utc)]`` newest first (db files only); ``note`` is trusted HTML."""
+    head = "💾 <b>Бэкапы</b>"
+    if service is None:
+        return head + "\n\nБэкапы доступны только для SQLite."
+    tz = _tz_of(rs)
+    backups = list(db_backups or [])
+    last = service.last_backup_at if isinstance(getattr(service, "last_backup_at", None), datetime) else None
+    if last is None and backups:
+        last = backups[0][2]
+    lines = [head, ""]
+    if note:
+        lines += [note, ""]
+    lines.append("Последний: " + (fmt_local(last, tz) if last else "ещё не было"))
+    err = getattr(service, "last_error", None)
+    if err:
+        lines.append(f"⚠️ Последняя ошибка: {_e(_clip(err, MAX_ERROR_CHARS))}")
+    lines.append(f"Хранить последних: {getattr(rs, 'backup_keep', service.keep)}")
+    if backups:
+        lines += ["", "Свежие копии базы:"]
+        lines += [f"• {_e(p.name)} — {_size_label(size)}, {fmt_local(mt, tz)}" for p, size, mt in backups[:5]]
+    lines += ["", "Копии лежат на сервере в data/backups; файл сессии Telegram в чат никогда не отправляется."]
+    return "\n".join(lines)
+
+
+BACKUP_KEEP_PRESETS = (3, 7, 14, 30)
+
+
+def backup_keyboard(rs, service) -> InlineKeyboardMarkup:
+    if service is None:
+        return InlineKeyboardMarkup(inline_keyboard=[[_btn("⬅️ Назад", "m:set")]])
+    cur = getattr(rs, "backup_keep", None)
+    keep = [_btn(("✅ " if n == cur else "") + str(n), f"bk:k:{n}") for n in BACKUP_KEEP_PRESETS]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_btn("💾 Сделать бэкап сейчас", "bk:now")],
+        keep,
+        [_btn("⬅️ Назад", "m:set")],
     ])
 
 
@@ -125,8 +249,8 @@ TIMEZONE_REMINDER = "Жду текст: имя часового пояса IANA,
 
 
 def timezone_text(rs) -> str:
-    return (f"🕒 Часовой пояс: {_e(getattr(rs, 'timezone', 'Europe/Sofia'))}\n"
-            f"По нему показывается время в журнале и на экране проверки каналов.")
+    return (f"🕒 <b>Часовой пояс</b>: {_e(getattr(rs, 'timezone', 'Europe/Sofia'))}\n\n"
+            f"По нему показывается время в журнале, статусе и бэкапах.")
 
 
 def timezone_keyboard(rs) -> InlineKeyboardMarkup:
@@ -135,7 +259,7 @@ def timezone_keyboard(rs) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         btns[:2], btns[2:4], btns[4:],
         [_btn("✏️ Своё (IANA, напр. Europe/Warsaw)", "tz:custom")],
-        [_btn("⬅️ Назад", "m:main")]])
+        [_btn("⬅️ Назад", "m:set")]])
 
 
 INTERVAL_PROMPT = ("Пришлите интервал: число минут (например 500) или с единицей: 90с, 30м, 2ч. "
@@ -152,7 +276,7 @@ def last_poll_line(listener, tz: str = "Europe/Sofia") -> str:
 
 
 def interval_text(rs, listener=None) -> str:
-    text = f"⏱ Как часто проверять каналы\nСейчас: каждые {format_interval(rs.poll_interval_sec)}"
+    text = f"⏱ <b>Период проверки</b>\n\nКак часто смотреть каналы. Сейчас: каждые {format_interval(rs.poll_interval_sec)}"
     if listener is not None:
         text += "\n" + last_poll_line(listener, getattr(rs, "timezone", "Europe/Sofia"))
     return text
@@ -165,13 +289,13 @@ def interval_keyboard(rs) -> InlineKeyboardMarkup:
         btns[:4], btns[4:],
         [_btn("✏️ Своё значение", "pi:custom")],
         [_btn("🔄 Проверить сейчас", "pi:now")],
-        [_btn("⬅️ Назад", "m:main")]])
+        [_btn("⬅️ Назад", "m:set")]])
 
 
 def channels_text(channels: list[dict]) -> str:
     if not channels:
-        return "📡 Каналов нет. Добавьте публичный канал."
-    lines = ["📡 Каналы (✅ слушаем, ⏸ выключен; 👆 — нажимать ли кнопку «получить контакт»)"]
+        return "📡 <b>Каналы</b>\n\nКаналов нет. Добавьте публичный канал."
+    lines = ["📡 <b>Каналы</b>", "✅ слушаем · ⏸ выключен · 👆 клик — нажимать ли кнопку «получить контакт»", ""]
     for c in channels:
         mark = "✅" if c.get("enabled") else "⏸"
         title = _e(c.get("title"))
@@ -196,7 +320,8 @@ def channels_keyboard(channels: list[dict]) -> InlineKeyboardMarkup:
 
 
 def confirm_delete_text(ch: dict) -> str:
-    return f"Удалить {_e(channel_label(ch))}? Сообщения и заказы останутся, канал перестанут слушать."
+    return (f"🗑 <b>Удалить канал</b>\n\n{_e(channel_label(ch))}?\n"
+            f"Сообщения и заказы останутся, канал перестанут слушать.")
 
 
 def confirm_delete_keyboard(tg_id: int) -> InlineKeyboardMarkup:
@@ -205,9 +330,9 @@ def confirm_delete_keyboard(tg_id: int) -> InlineKeyboardMarkup:
 
 
 def thresholds_text(rs) -> str:
-    return (f"🎯 Пороги (0–100)\n"
-            f"Уведомлять от: {rs.notify_score}\n"
-            f"Высокое соответствие от: {rs.high_fit_score}")
+    return (f"🎯 <b>Пороги</b> (оценка 0–100)\n\n"
+            f"Присылать заказы от: {rs.notify_score}\n"
+            f"🔥 Отличное совпадение от: {rs.high_fit_score}")
 
 
 def thresholds_keyboard(rs) -> InlineKeyboardMarkup:
@@ -218,16 +343,16 @@ def thresholds_keyboard(rs) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         row("Порог", "n", rs.notify_score),
         row("Высокий", "h", rs.high_fit_score),
-        [_btn("⬅️ Назад", "m:main")],
+        [_btn("⬅️ Назад", "m:set")],
     ])
 
 
-def back_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[_btn("⬅️ Назад", "m:main")]])
+def back_keyboard(target: str = "m:main") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[_btn("⬅️ Назад", target)]])
 
 
 def model_prompt(current: str) -> str:
-    return (f"🤖 Текущая модель: <code>{_e(current)}</code>\n"
+    return (f"🧠 <b>Модель</b>\n\nТекущая: <code>{_e(current)}</code>\n"
             f"Пришлите новую в формате провайдер/модель, например <code>{MODEL_EXAMPLE}</code>.\n"
             f"Список: {MODELS_URL}\n/cancel — отмена")
 
@@ -247,7 +372,7 @@ def forwarded_channel_username(message) -> str | None:
 TELEGRAM_LIMIT = 4096
 UPLOAD_PROMPT = ("📎 Пришлите резюме или портфолио файлом: PDF (с текстом), DOCX, MD или TXT, до 10 МБ. "
                  "/cancel — отмена")
-PHOTO_REMINDER = "Пришлите файлом (PDF/DOCX/TXT/MD), не фото"
+PHOTO_REMINDER = "Пришлите файлом (PDF/DOCX/TXT/MD), не фото. /cancel — отмена"
 UPLOAD_REMINDER = "Жду файл (PDF/DOCX/TXT/MD). /cancel — отмена"
 ADD_SKILLS_PROMPT = "➕ Пришлите навыки через запятую или с новой строки. /cancel — отмена"
 REMOVE_SKILLS_PROMPT = "➖ Пришлите навыки, которые убрать, через запятую или с новой строки. /cancel — отмена"
@@ -255,7 +380,7 @@ REMOVE_SKILLS_PROMPT = "➖ Пришлите навыки, которые убр
 
 def profile_text(status: dict, compact: str) -> str:
     """Status line + compact profile in <pre>, html-escaped and trimmed to the Telegram limit."""
-    head = (f"👤 Профиль исполнителя\n"
+    head = (f"👤 <b>Профиль исполнителя</b>\n\n"
             f"Основа: {status.get('base_projects', 0)} проектов из портфолио; "
             f"загружено файлов: {status.get('uploads', 0)}; "
             f"ручные: +{status.get('added', 0)} / −{status.get('removed', 0)}\n"
@@ -285,8 +410,8 @@ def _size_label(size: int) -> str:
 
 def files_text(uploads: list[tuple[str, int]]) -> str:
     if not uploads:
-        return "📂 Загруженных файлов нет."
-    lines = ["📂 Загруженные файлы (🗑 — удалить):"]
+        return "📂 <b>Файлы</b>\n\nЗагруженных файлов нет."
+    lines = ["📂 <b>Файлы</b> (🗑 — удалить)", ""]
     lines += [f"• {_e(n)} ({_size_label(s)})" for n, s in uploads]
     return "\n".join(lines)
 
@@ -315,8 +440,10 @@ def upload_summary(summary: dict) -> str:
 
 
 class MenuHandlers:
-    def __init__(self, repo, runtime_settings=None, listener=None, profile_service=None) -> None:
+    def __init__(self, repo, runtime_settings=None, listener=None, profile_service=None,
+                 backup_service=None) -> None:
         self.profile_service = profile_service
+        self.backup_service = backup_service   # may be set later by NotifyBot (None: not SQLite)
         self.repo = repo
         self.runtime_settings = runtime_settings
         self.listener = listener
@@ -325,7 +452,7 @@ class MenuHandlers:
 
     def register(self, router: Router) -> None:
         m = router.message
-        m.register(self.cmd_start, Command("start", "help"))
+        m.register(self.cmd_start, Command("start", "help"))   # welcome text + main menu
         m.register(self.cmd_menu, Command("menu"))
         m.register(self.cmd_channels, Command("channels"))
         m.register(self.cmd_profile, Command("profile"))
@@ -369,13 +496,42 @@ class MenuHandlers:
             if "not modified" not in str(e):
                 log.debug("cannot edit menu message: %s", e)
 
+    async def _db_backups(self) -> list:
+        svc = self.backup_service
+        if svc is None:
+            return []
+        try:
+            items = await asyncio.to_thread(svc.list)
+        except Exception:  # noqa: BLE001
+            log.exception("cannot list backups")
+            return []
+        return [it for it in items if it[0].name.startswith("app-")]
+
+    async def _main_screen(self, rs) -> tuple[str, InlineKeyboardMarkup]:
+        backup = None
+        if self.backup_service is not None:
+            last = self.backup_service.last_backup_at
+            if not isinstance(last, datetime):
+                dbs = await self._db_backups()
+                last = dbs[0][2] if dbs else None
+            backup = {"last_at": last, "keep": getattr(rs, "backup_keep", self.backup_service.keep)}
+        text = main_text(rs, await self._channels(), self.listener, backup)
+        return text, main_keyboard(rs)
+
+    async def _settings_screen(self, rs) -> tuple[str, InlineKeyboardMarkup]:
+        return settings_text(rs), settings_keyboard(rs)
+
+    async def _backup_screen(self, rs, note: str | None = None) -> tuple[str, InlineKeyboardMarkup]:
+        svc = self.backup_service
+        return backup_text(rs, svc, await self._db_backups(), note), backup_keyboard(rs, svc)
+
     async def _send_main(self, message: Message) -> None:
         rs = self.runtime_settings
         if rs is None:
             await message.answer(UNAVAILABLE, parse_mode=None)
             return
-        await message.answer(main_text(rs, await self._channels()), reply_markup=main_keyboard(rs),
-                             parse_mode="HTML")
+        text, kb = await self._main_screen(rs)
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
     async def _send_channels(self, message: Message) -> None:
         if self.listener is None:
@@ -408,7 +564,8 @@ class MenuHandlers:
 
     async def cmd_start(self, message: Message, state: FSMContext | None = None) -> None:
         await self._clear(state)
-        await message.answer(HELP_TEXT, parse_mode=None)
+        await message.answer(WELCOME_TEXT, parse_mode="HTML")
+        await self._send_main(message)
 
     async def cmd_menu(self, message: Message, state: FSMContext | None = None) -> None:
         await self._clear(state)
@@ -420,7 +577,8 @@ class MenuHandlers:
 
     async def cmd_stats(self, message: Message, state: FSMContext | None = None) -> None:
         await self._clear(state)
-        await message.answer(format_stats(await self.repo.get_stats(), self._tz()), parse_mode=None)
+        await message.answer(format_stats(await self.repo.get_stats(), self._tz()),
+                             reply_markup=back_keyboard(), parse_mode=None)
 
     def _tz(self) -> str:
         return getattr(self.runtime_settings, "timezone", "Europe/Sofia")
@@ -524,8 +682,9 @@ class MenuHandlers:
             await message.answer(f"{e}\nПопробуйте ещё раз или /cancel", parse_mode=None)
             return
         await self._clear(state)
-        await message.answer(f"Модель изменена: {rs.openrouter_model}", parse_mode=None)
-        await self._send_main(message)
+        await message.answer(f"✅ Модель изменена: {rs.openrouter_model}", parse_mode=None)
+        text, kb = await self._settings_screen(rs)
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
     async def on_interval_input(self, message: Message, state: FSMContext | None = None) -> None:
         rs = self.runtime_settings
@@ -639,6 +798,8 @@ class MenuHandlers:
                 await self._on_timezone(cb, state, action, rs)
             elif kind == "pi":
                 await self._on_interval(cb, state, action, rs)
+            elif kind == "bk":
+                await self._on_backup(cb, action, arg, rs)
             else:
                 await self._on_threshold(cb, action, arg, rs)
         except Exception:  # noqa: BLE001 - a menu press must never crash the dispatcher
@@ -646,7 +807,50 @@ class MenuHandlers:
             await cb.answer("Ошибка, попробуйте ещё раз", show_alert=True)
 
     async def _show_main(self, cb: CallbackQuery, rs) -> None:
-        await self._edit(cb, main_text(rs, await self._channels()), main_keyboard(rs))
+        text, kb = await self._main_screen(rs)
+        await self._edit(cb, text, kb)
+
+    async def _show_settings(self, cb: CallbackQuery, rs) -> None:
+        text, kb = await self._settings_screen(rs)
+        await self._edit(cb, text, kb)
+
+    async def _on_backup(self, cb: CallbackQuery, action: str, arg: str | None, rs) -> None:
+        svc = self.backup_service
+        if rs is None:
+            await cb.answer(UNAVAILABLE, show_alert=True)
+            return
+        if svc is None:
+            if action == "show":   # the screen itself explains it; the only button is "Назад"
+                text, kb = await self._backup_screen(rs)
+                await self._edit(cb, text, kb)
+                await cb.answer()
+            else:
+                await cb.answer("Бэкапы доступны только для SQLite", show_alert=True)
+            return
+        if action == "now":
+            await cb.answer()
+            await self._edit(cb, "⏳ Делаю бэкап…", InlineKeyboardMarkup(inline_keyboard=[]))
+            try:
+                path = await svc.backup_now()
+                note = f"✅ Готово: {_e(path.name)}"
+            except Exception as e:  # noqa: BLE001 - the service already alerted and logged
+                note = f"❌ Ошибка: {_e(_clip(f'{type(e).__name__}: {e}', MAX_ERROR_CHARS))}"
+            text, kb = await self._backup_screen(rs, note)
+            await self._edit(cb, text, kb)
+            return
+        if action == "k":
+            keep = to_int(arg)
+            if keep is None:
+                await cb.answer()
+                return
+            try:
+                await rs.set("backup_keep", keep)
+            except ValueError as e:
+                await cb.answer(str(e)[:200], show_alert=True)
+                return
+        text, kb = await self._backup_screen(rs)
+        await self._edit(cb, text, kb)
+        await cb.answer()
 
     async def _show_channels(self, cb: CallbackQuery) -> None:
         chs = await self._channels()
@@ -670,6 +874,14 @@ class MenuHandlers:
             return
         if action == "main":
             await self._show_main(cb, rs)
+        elif action == "set":
+            await self._show_settings(cb, rs)
+        elif action == "bk":
+            await self._on_backup(cb, "show", None, rs)
+            return
+        elif action == "now":
+            await self._check_now(cb, rs, from_main=True)
+            return
         elif action == "th":
             await self._edit(cb, thresholds_text(rs), thresholds_keyboard(rs))
         elif action == "pr":
@@ -686,16 +898,20 @@ class MenuHandlers:
         elif action == "md":
             if state is not None:
                 await state.set_state(MenuStates.waiting_model)
-            await self._edit(cb, model_prompt(rs.openrouter_model), back_keyboard())
-        elif action in ("paid", "pause"):
-            key, value = (("show_paid_contact", not rs.show_paid_contact) if action == "paid"
-                          else ("notifications_paused", not rs.notifications_paused))
+            await self._edit(cb, model_prompt(rs.openrouter_model), back_keyboard("m:set"))
+        elif action in ("paid", "pause", "al"):
+            key, value = {"paid": ("show_paid_contact", not rs.show_paid_contact),
+                          "pause": ("notifications_paused", not rs.notifications_paused),
+                          "al": ("alerts_enabled", not getattr(rs, "alerts_enabled", True))}[action]
             try:
                 await rs.set(key, value)
             except ValueError as e:
                 await cb.answer(str(e)[:200], show_alert=True)
                 return
-            await self._show_main(cb, rs)
+            if action == "pause":
+                await self._show_main(cb, rs)
+            else:
+                await self._show_settings(cb, rs)
         await cb.answer()
 
     async def _on_journal(self, cb: CallbackQuery, state) -> None:
@@ -777,7 +993,7 @@ class MenuHandlers:
                 await self._show_files(cb)
                 return
             if action == "d":
-                await self._edit(cb, f"Удалить файл {_e(name)}? Навыки из него пропадут из профиля.",
+                await self._edit(cb, f"🗑 <b>Удалить файл</b>\n\n{_e(name)}?\nНавыки из него пропадут из профиля.",
                                  confirm_file_keyboard(arg))
             else:
                 await ps.delete_upload(name)
@@ -792,7 +1008,7 @@ class MenuHandlers:
         if action == "add":
             if state is not None:
                 await state.set_state(MenuStates.waiting_channel)
-            await self._edit(cb, CHANNEL_PROMPT, back_keyboard(), html_mode=False)
+            await self._edit(cb, CHANNEL_PROMPT, back_keyboard("m:ch"), html_mode=False)
             await cb.answer()
             return
         tg_id = to_int(arg)
@@ -821,7 +1037,7 @@ class MenuHandlers:
         await self._show_channels(cb)
         await cb.answer()
 
-    async def _check_now(self, cb: CallbackQuery, rs) -> None:
+    async def _check_now(self, cb: CallbackQuery, rs, from_main: bool = False) -> None:
         lst = self.listener
         if lst is None:
             await cb.answer(UNAVAILABLE, show_alert=True)
@@ -839,7 +1055,10 @@ class MenuHandlers:
             return
         if cb.message is not None:
             await cb.message.answer(f"Проверено: {lst.last_poll_new} новых постов", parse_mode=None)
-        await self._edit(cb, interval_text(rs, lst), interval_keyboard(rs))
+        if from_main:
+            await self._show_main(cb, rs)
+        else:
+            await self._edit(cb, interval_text(rs, lst), interval_keyboard(rs))
 
     async def _on_interval(self, cb: CallbackQuery, state, action: str, rs) -> None:
         if rs is None:

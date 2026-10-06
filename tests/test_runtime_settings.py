@@ -27,7 +27,7 @@ async def test_defaults_from_env(repo):
     assert rs.as_dict() == {"notify_score": 70, "high_fit_score": 80, "show_paid_contact": True,
                             "notifications_paused": False, "openrouter_model": "a/b",
                             "poll_interval_sec": 120, "log_retention_days": 30,
-                            "timezone": "Europe/Sofia"}
+                            "timezone": "Europe/Sofia", "alerts_enabled": True, "backup_keep": 7}
 
 
 async def test_db_overrides_env(repo):
@@ -172,3 +172,45 @@ async def test_pause_keeps_accepted_then_flush_sends_once_without_second_click(r
     job = await repo.get_job(1)
     assert job.status == JobStatus.NOTIFIED and notifier.calls == [1] and actions.clicks == 1
     assert await pipe.flush_backlog() == 0 and notifier.calls == [1]
+
+
+# ------------------------------------------------------------------ alerts_enabled / backup_keep
+
+async def test_alerts_enabled_and_backup_keep_defaults_from_config(repo):
+    rs = await RuntimeSettings.load(repo, env(alerts_enabled=False, backup_keep=12))
+    assert rs.alerts_enabled is False and rs.backup_keep == 12
+
+
+async def test_alerts_enabled_persisted_validated_and_live(repo):
+    rs = await RuntimeSettings.load(repo, env())
+    seen = []
+    rs.subscribe(lambda r: seen.append(r.alerts_enabled))
+    await rs.set("alerts_enabled", False)
+    assert rs.alerts_enabled is False and seen == [False]
+    assert (await RuntimeSettings.load(repo, env())).alerts_enabled is False   # DB wins over config
+    for bad in ("yes", 1, None):
+        with pytest.raises(ValueError):
+            await rs.set("alerts_enabled", bad)
+    assert rs.alerts_enabled is False
+
+
+async def test_backup_keep_persisted_validated_and_live(repo):
+    rs = await RuntimeSettings.load(repo, env())
+    seen = []
+    rs.subscribe(lambda r: seen.append(r.backup_keep))
+    await rs.set("backup_keep", "14")
+    assert rs.backup_keep == 14 and seen == [14]
+    assert (await RuntimeSettings.load(repo, env(backup_keep=3))).backup_keep == 14
+    for bad in (0, 61, -1, "abc", True, 2.5, ""):
+        with pytest.raises(ValueError, match="от 1 до 60"):
+            await rs.set("backup_keep", bad)
+    assert rs.backup_keep == 14
+    await rs.set("backup_keep", 1)
+    await rs.set("backup_keep", 60)
+
+
+async def test_invalid_stored_backup_keep_ignored_and_bad_config_clamped(repo):
+    await repo.set_setting("backup_keep", 999)
+    rs = await RuntimeSettings.load(repo, env(backup_keep=5))
+    assert rs.backup_keep == 5
+    assert (await RuntimeSettings.load(repo, env(backup_keep=0))).backup_keep == 7

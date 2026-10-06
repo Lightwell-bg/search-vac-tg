@@ -129,6 +129,13 @@ class Settings:
     log_file: Path
     timezone: str = "Europe/Sofia"      # display timezone (config.ini [ui] timezone)
     log_retention_days: int = 30        # initial journal retention (config.ini [journal])
+    log_max_bytes: int = 5 * 1024 * 1024  # config.ini [logging] max_bytes
+    log_backup_count: int = 3             # config.ini [logging] backup_count
+    heartbeat_file: Path = Path("data/heartbeat.json")  # config.ini [paths] heartbeat_file
+    alerts_enabled: bool = True         # initial value of the alerts switch (config.ini [alerts] enabled)
+    backup_dir: Path = Path("data/backups")  # config.ini [backup] dir
+    backup_keep: int = 7                # initial number of kept backups (config.ini [backup] keep)
+    backup_hour: int = 4                # local hour of the daily backup (config.ini [backup] hour)
 
     def missing_for_run(self) -> list[str]:
         """Names of variables required to run the monitor that are still empty."""
@@ -204,6 +211,13 @@ def load_settings(env_file: Path | None = None, ini_file: Path | None = None) ->
         log_file=path("logging", "file", "data/app.log"),
         timezone=_valid_timezone(_ini_get(cfg, "ui", "timezone", str, "Europe/Sofia")),
         log_retention_days=_valid_retention(_ini_get(cfg, "journal", "retention_days", int, 30), dedup_window),
+        log_max_bytes=max(1024, _ini_get(cfg, "logging", "max_bytes", int, 5 * 1024 * 1024)),
+        log_backup_count=max(0, _ini_get(cfg, "logging", "backup_count", int, 3)),
+        heartbeat_file=path("paths", "heartbeat_file", "data/heartbeat.json"),
+        alerts_enabled=_ini_get(cfg, "alerts", "enabled", _to_bool, True),
+        backup_dir=path("backup", "dir", "data/backups"),
+        backup_keep=min(max(_ini_get(cfg, "backup", "keep", int, 7), 1), 60),
+        backup_hour=min(max(_ini_get(cfg, "backup", "hour", int, 4), 0), 23),
     )
 
 
@@ -250,7 +264,8 @@ def setup_logging(settings: Settings) -> None:
     root.addHandler(stream)
     settings.log_file.parent.mkdir(parents=True, exist_ok=True)
     fh = logging.handlers.RotatingFileHandler(
-        settings.log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        settings.log_file, maxBytes=settings.log_max_bytes, backupCount=settings.log_backup_count,
+        encoding="utf-8"
     )
     fh.setFormatter(fmt)
     root.addHandler(fh)

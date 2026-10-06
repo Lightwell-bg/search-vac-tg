@@ -47,8 +47,8 @@ def test_plain_mode_has_no_markup():
 def test_header_high_vs_normal():
     high = build_card(make_job(fit_score=80), None, [], SETTINGS)
     normal = build_card(make_job(fit_score=72), None, [], SETTINGS)
-    assert high.startswith("🔥 Подходящий заказ — 80/100")
-    assert normal.startswith("✅ Возможно подходит — 72/100")
+    assert high.startswith("🔥 Отличное совпадение · 80/100\n▰▰▰▰▰▰▰▰▱▱")
+    assert normal.startswith("✅ Может подойти · 72/100\n▰▰▰▰▰▰▰▱▱▱")
 
 
 def test_card_is_capped_and_budget_omitted():
@@ -107,9 +107,65 @@ def test_owner_only():
 def test_format_stats_savings_line():
     text = format_stats({"jev_processed": 10, "openrouter_review_calls": 2, "openrouter_calls": 3,
                          "jobs_by_status": {"notified": 4}})
-    assert "OpenRouter вызван для 2 из 10 прошедших правила (80% сэкономлено)" in text
-    assert "review 2 / other 1" in text and "notified: 4" in text
-    assert "Estimated JEV cost" in format_stats({})
+    assert "OpenRouter: проверок 2, прочих вызовов 1 · сэкономлено 80%" in text
+    assert "Отправлено: 4" in text and "notified" not in text
+    assert "💵 Расходы (оценка)" in format_stats({})
+
+
+def test_format_stats_sections_and_costs():
+    text = format_stats({"messages_received": 5, "jev_processed": 4, "jev_accepts": 2, "jev_rejects": 1,
+                         "jev_reviews": 1, "jev_errors": 1, "jev_fallbacks": 1, "feedback_up": 3,
+                         "jev_cost_usd": 0.5, "openrouter_cost_usd": 0.25})
+    for part in ("📊 Статистика за всё время", "📥 Поток", "Получено сообщений: 5", "🧠 Отбор (JEV)",
+                 "Проверено: 4 — подходит 2 · мимо 1 · на проверку 1",
+                 "Ошибки JEV: 1 (резерв через OpenRouter: 1)", "📨 Уведомления", "Отзывы: 👍 3 · 👎 0",
+                 "JEV $0.5000 · OpenRouter $0.2500 · всего $0.7500"):
+        assert part in text
+    assert "Messages" not in text and "Jobs by status" not in text
+
+
+def test_every_job_status_has_russian_label():
+    from src.bot.stats_format import JOB_STATUS_LABELS, status_label
+    from src.db.models import JobStatus
+
+    for status in JobStatus.all():
+        assert JOB_STATUS_LABELS.get(status), status
+        assert status_label(status) != status
+    assert status_label("weird") == "weird"
+
+
+def test_score_bar_boundaries():
+    from src.bot.cards import score_bar
+
+    assert score_bar(0) == "▱" * 10
+    assert score_bar(4) == "▱" * 10
+    assert score_bar(5) == "▰" + "▱" * 9
+    assert score_bar(95) == "▰" * 10
+    assert score_bar(100) == "▰" * 10
+    assert score_bar(150) == "▰" * 10 and score_bar(-3) == "▱" * 10
+
+
+def test_card_new_layout_labels_and_routes():
+    job = make_job(category="wordpress", route="JEV → OpenRouter review", budget="10$")
+    card = build_card(job, None, sources("a", "b"), SETTINGS)
+    assert "🏷 WordPress" in card and "💰 Бюджет: 10$" in card and "📡 Источник: a, b" in card
+    assert "👤 Контакт: @client_name" in card and "🧭 Отбор: JEV + проверка OpenRouter" in card
+    assert "✨ <b>Почему подходит</b>" in card
+    plain = build_card(job, None, sources("a"), SETTINGS, html=False)
+    assert "✨ Почему подходит" in plain and "<b>" not in plain
+    from src.bot.cards import route_label
+    for route in ("rules", "JEV", "JEV → OpenRouter review", "JEV error → OpenRouter"):
+        assert route_label(route) != route or route == "JEV"
+    assert "🏷" not in build_card(make_job(category="unknown_cat"), None, [], SETTINGS)
+    assert "🧭 Отбор: <b>x</b>" not in build_card(make_job(route="<b>x</b>"), None, [], SETTINGS)
+    assert "🧭 Отбор: &lt;b&gt;x&lt;/b&gt;" in build_card(make_job(route="<b>x</b>"), None, [], SETTINGS)
+
+
+def test_card_escapes_meta_fields():
+    job = make_job(budget="<i>1</i>", contact_value="<u>c</u>", title="<s>t</s>")
+    card = build_card(job, None, sources("<ch>"), SETTINGS)
+    assert "<i>" not in card and "<u>" not in card and "<s>" not in card and "<ch>" not in card
+    assert "&lt;i&gt;1&lt;/i&gt;" in card and "&lt;ch&gt;" in card
 
 
 def test_skills_dedupe_case_insensitive_and_skip_generic():
@@ -185,7 +241,8 @@ def test_telejobo_card_plain_and_html():
     assert "t.me" not in plain and "Разместить" not in plain and "Получать больше" not in plain
     assert "Писать: @aziza_design" in plain
     assert plain.count("Разработчик Telegram чатбота для сервиса аренды байков") == 1  # 💬 duplicate of the title is dropped
-    assert "\n\nПочему подходит:\n• Telegram-боты и автоматизация\n\n📡 telejobo" in plain
+    assert "🏷 Telegram-боты и автоматизация" in plain
+    assert "\n\n✨ Почему подходит\n• Telegram-боты и автоматизация\n\n📡 Источник: telejobo" in plain
     assert "• бот" not in plain
     html = build_card(telejobo_job(), None, sources("telejobo"), SETTINGS, html=True)
     assert "<b>Разработчик Telegram чатбота для сервиса аренды байков</b>" in html

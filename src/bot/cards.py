@@ -26,7 +26,15 @@ CATEGORY_LABELS = {
     "wordpress": "WordPress",
     "parsing": "Парсинг",
 }
-_DEFAULT_FILTER_FILE = Path(__file__).resolve().parents[2] / "config" / "filter.yaml"
+# Job.route values written by src/filtering/pipeline.py (ROUTE_* constants)
+ROUTE_LABELS = {
+    "rules": "правила",
+    "JEV": "JEV",
+    "JEV → OpenRouter review": "JEV + проверка OpenRouter",
+    "JEV error → OpenRouter": "OpenRouter (JEV недоступен)",
+}
+BAR_SEGMENTS = 10
+_DEFAULT_FILTER_FILE =Path(__file__).resolve().parents[2] / "config" / "filter.yaml"
 _markers_cache: dict[str, tuple] = {}
 
 
@@ -106,38 +114,52 @@ def contact_line(job) -> str:
     return "контакт не найден"
 
 
+def score_bar(score: int) -> str:
+    """10-segment bar: 0 -> ▱×10, 5 -> 1 filled segment (rounded half up), 100 -> ▰×10."""
+    filled = max(0, min(BAR_SEGMENTS, (int(score) + 5) // 10))
+    return "▰" * filled + "▱" * (BAR_SEGMENTS - filled)
+
+
+def route_label(route: str) -> str:
+    """Russian label of a Job.route value; an unknown value is returned as is (caller escapes it)."""
+    return ROUTE_LABELS.get(route, route)
+
+
 def build_card(job, message, sources, settings, html: bool = True) -> str:
     """Return the card text (HTML when ``html`` else plain), always under 4096 chars."""
     esc = (lambda s: _html.escape(str(s), quote=False)) if html else (lambda s: str(s))
     bold = (lambda s: f"<b>{s}</b>") if html else (lambda s: s)
 
-    score = int(job.fit_score or 0)
+    score = max(0, min(100, int(job.fit_score or 0)))
     high = score >= int(getattr(settings, "high_fit_score", 80))
-    header = f"🔥 Подходящий заказ — {score}/100" if high else f"✅ Возможно подходит — {score}/100"
+    header = (f"🔥 Отличное совпадение · {score}/100" if high else f"✅ Может подойти · {score}/100")
 
-    head_lines = [header]
+    head_lines = [header, score_bar(score)]
+    category = CATEGORY_LABELS.get(str(getattr(job, "category", None) or ""))
+    if category:
+        head_lines.append(f"🏷 {category}")
     title = (job.title or "").strip()
     if title:
-        head_lines.append(bold(esc(_clip(title, 200))))
+        head_lines.extend(["", bold(esc(_clip(title, 200)))])
 
     tail_lines: list[str] = []
     skills = relevant_skills(job)
     reason = (job.decision_reason or "").strip()
     if skills or reason:
-        tail_lines.extend(["", "Почему подходит:"])
+        tail_lines.extend(["", "✨ " + bold("Почему подходит")])
         if skills:
             tail_lines.extend(f"• {esc(s)}" for s in skills)
         else:
             tail_lines.append(f"• {esc(_clip(reason, MAX_REASON))}")
     meta_start = len(tail_lines)
     if job.budget:
-        tail_lines.append(f"💰 {esc(_clip(job.budget, 128))}")
+        tail_lines.append(f"💰 Бюджет: {esc(_clip(job.budget, 128))}")
     names = channel_names(sources, message)
     if names:
-        tail_lines.append("📡 " + esc(", ".join(names)))
-    tail_lines.append("👤 " + esc(_clip(contact_line(job), 300)))
+        tail_lines.append("📡 Источник: " + esc(", ".join(names)))
+    tail_lines.append("👤 Контакт: " + esc(_clip(contact_line(job), 300)))
     if job.route:
-        tail_lines.append(f"🤖 Отбор: {esc(job.route)}")
+        tail_lines.append(f"🧭 Отбор: {esc(route_label(job.route))}")
 
     tail_lines.insert(meta_start, "")
     head = "\n".join(head_lines)
@@ -148,7 +170,7 @@ def build_card(job, message, sources, settings, html: bool = True) -> str:
     limit = TEXT_LIMIT
     while True:
         body = esc(_clip(body_raw, limit)) if body_raw else ""
-        parts = [head] + ([body] if body else []) + [tail]
+        parts = [head] + (["", body] if body else []) + [tail]
         card = "\n".join(parts)
         if len(card) <= SAFE_LIMIT or limit <= 50:
             break

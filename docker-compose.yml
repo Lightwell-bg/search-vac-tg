@@ -4,6 +4,8 @@ services:
     build: .
     env_file: .env
     restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
     volumes:
       - ./data:/app/data
       - ./config:/app/config:ro

@@ -1,0 +1,18 @@
+line-length = 120
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = [
+    "E501",   # long lines: existing code is not reflowed
+    "E701",   # one-line compound statements
+    "E731",   # lambda assignment
+    "B008",
+    "B904",   # raise ... from in except: not enforced
+    "B905",   # zip(strict=) not required
+    "I001",   # import order: not reformatted across the existing code
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["E402", "B011", "B017"]
+"scripts/*" = ["E402"]

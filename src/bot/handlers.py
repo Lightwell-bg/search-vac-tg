@@ -6,7 +6,7 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware, Router
-from aiogram.types import CallbackQuery, LinkPreviewOptions, Message, TelegramObject
+from aiogram.types import CallbackQuery, LinkPreviewOptions, TelegramObject
 
 from ..llm.schemas import LlmError
 from ..profile.loader import compact_profile
@@ -59,7 +59,7 @@ class OwnerOnlyMiddleware(BaseMiddleware):
 
 class BotHandlers:
     def __init__(self, settings, repo, llm, profile: dict, *, runtime_settings=None, listener=None,
-                 profile_service=None) -> None:
+                 profile_service=None, backup_service=None) -> None:
         self.settings = settings
         self.repo = repo
         self.llm = llm
@@ -71,7 +71,7 @@ class BotHandlers:
         self.router.message.outer_middleware(mw)
         self.router.callback_query.outer_middleware(mw)
         # menu commands, FSM inputs and menu callbacks are registered before the job-card callbacks
-        self.menu = MenuHandlers(repo, runtime_settings, listener, profile_service)
+        self.menu = MenuHandlers(repo, runtime_settings, listener, profile_service, backup_service)
         self.menu.register(self.router)
         self.router.callback_query.register(self.on_callback)
 

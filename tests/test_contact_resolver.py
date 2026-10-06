@@ -1,7 +1,6 @@
 import ast
 from pathlib import Path
 
-import pytest
 
 from src.telegram.contact_resolver import (
     DIRECT,

@@ -19,17 +19,30 @@ class NotifyBot:
     """Implements the pipeline ``Notifier`` protocol."""
 
     def __init__(self, settings, repo, llm, profile: dict, *, runtime_settings=None, listener=None,
-                 pipeline=None, profile_service=None) -> None:
+                 pipeline=None, profile_service=None, alerter=None, backup_service=None) -> None:
         self.settings = settings
         self.repo = repo
         self.runtime_settings = runtime_settings   # RuntimeSettings (src/settings_store.py)
         self.listener = listener                   # ChannelListener registry API
         self.pipeline = pipeline                   # Pipeline (flush_backlog etc.)
+        self.alerter = alerter                     # Alerter (src/alerts.py)
+        self._backup_service = backup_service      # BackupService (src/backup.py): backup_now/list
         self.bot = Bot(token=settings.notify_bot_token)
         self.handlers = BotHandlers(settings, repo, llm, profile, runtime_settings=runtime_settings,
-                                    listener=listener, profile_service=profile_service)
+                                    listener=listener, profile_service=profile_service,
+                                    backup_service=backup_service)
         self.dp = Dispatcher(storage=MemoryStorage())
         self.dp.include_router(self.handlers.router)
+
+    @property
+    def backup_service(self):
+        return self._backup_service
+
+    @backup_service.setter
+    def backup_service(self, service) -> None:
+        """main.py sets it after construction; the menu must see the same service."""
+        self._backup_service = service
+        self.handlers.menu.backup_service = service
 
     def set_profile(self, profile: dict) -> None:
         self.handlers.profile = profile
@@ -50,6 +63,13 @@ class NotifyBot:
             link_preview_options=LinkPreviewOptions(is_disabled=True))
         return sent.chat.id, sent.message_id
 
+    async def send_owner(self, text: str) -> None:
+        """Plain HTML message to the owner (alerts). Raises on failure; Alerter catches it."""
+        if self.settings.owner_telegram_id is None:
+            raise RuntimeError("OWNER_TELEGRAM_ID is not set")
+        await self.bot.send_message(self.settings.owner_telegram_id, text, parse_mode=ParseMode.HTML,
+                                    link_preview_options=LinkPreviewOptions(is_disabled=True))
+
     async def set_commands(self) -> None:
         """Publish the command list for the owner's chat (fallback: default scope). Never raises."""
         commands = [BotCommand(command="menu", description="Главное меню"),
@@ -57,6 +77,7 @@ class NotifyBot:
                     BotCommand(command="profile", description="Профиль исполнителя"),
                     BotCommand(command="stats", description="Статистика"),
                     BotCommand(command="journal", description="Журнал проверок"),
+                    BotCommand(command="help", description="Как пользоваться"),
                     BotCommand(command="cancel", description="Отмена ввода")]
         try:
             if self.settings.owner_telegram_id is not None:

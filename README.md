@@ -2,7 +2,7 @@
 
 Monitors public Telegram channels with freelance job posts, filters them for one developer profile and sends only the fitting jobs to your private Telegram bot.
 
-Documentation: [docs/QUICK_START.md](docs/QUICK_START.md) (quick start, Russian) | [docs/architecture.md](docs/architecture.md) | [PROMPTS.md](PROMPTS.md) (JEV questions and OpenRouter prompts) | [README_RU.md](README_RU.md) (Russian version)
+Documentation: [docs/QUICK_START.md](docs/QUICK_START.md) (quick start, Russian) | [docs/architecture.md](docs/architecture.md) | [docs/PROMPTS.md](docs/PROMPTS.md) (JEV questions and OpenRouter prompts) | [docs/DEPLOY.md](docs/DEPLOY.md) (deploy, update, rollback, monitoring, backups; Russian) | [README_RU.md](README_RU.md) (Russian version)
 
 ## What it does
 
@@ -56,6 +56,9 @@ search-vac-tg/
   src/
     main.py                     entry point: monitor + bot in one event loop; build_pipeline()
     config.py                   settings from .env + config.ini, channels loader, logging setup
+    health.py                   heartbeat file + Docker healthcheck (python -m src.health check)
+    alerts.py                   owner alerts about the bot's own health (rate-limited)
+    backup.py                   daily and manual backups of the DB and the Telegram session
     telegram/
       client.py                 Telethon wrapper: session, channel reading, callback click, refetch
       listener.py               NewMessage handler + poll loop + retry loop
@@ -80,10 +83,11 @@ search-vac-tg/
       matcher.py                picks projects relevant to a job
     bot/
       bot.py                    NotifyBot: sends cards, runs the dispatcher
-      handlers.py               /start, /stats, feedback and reply-draft callbacks (owner only)
-      cards.py                  job card text (HTML-escaped)
+      handlers.py               feedback and reply-draft callbacks, owner-only middleware
+      menu.py                   /start, /menu dashboard, settings, backups, channels, profile screens
+      cards.py                  job card text (score bar, labels, HTML-escaped)
       keyboards.py              inline keyboard of a card
-      stats_format.py           statistics text
+      stats_format.py           statistics text (Russian, sectioned) and job status labels
     db/
       database.py               async engine and session
       models.py                 ORM models and JobStatus
@@ -98,13 +102,14 @@ search-vac-tg/
     rebuild_profile.py          rebuild the profile from materials/
     dry_run.py                  run the real pipeline on sample texts without Telegram
     stats.py                    print statistics from the DB
+    restore_backup.py           list backups / restore the DB (and session) from a backup
   tests/                        pytest tests
-  docs/                         QUICK_START.md, architecture.md, PROGRESS.md
+  docs/                         QUICK_START.md, DEPLOY.md, PROMPTS.md, architecture.md, PROGRESS.md
   data/                         runtime files: app.db, telegram.session, profile.*, app.log (git-ignored)
   Dockerfile, docker-compose.yml
   requirements.txt, requirements-dev.txt
+  ruff.toml                     linter settings
   .env.example                  template of secrets (real values go to .env)
-  PROMPTS.md                    JEV questions and OpenRouter prompts
 ```
 
 ## Installation and running on a VPS (Docker)
@@ -114,11 +119,12 @@ Everything runs on an Ubuntu VPS in Docker; the server needs only Docker and git
 1. Docker and the code:
    ```bash
    curl -fsSL https://get.docker.com | sudo sh
-   cd /opt && sudo git clone https://github.com/Lightwell-bg/search-vac-tg.git
+   sudo git clone https://github.com/Lightwell-bg/search-vac-tg.git /opt/search-vac-tg
+   sudo chown -R "$USER":"$USER" /opt/search-vac-tg
    cd /opt/search-vac-tg
    ```
 2. Secrets: `cp .env.example .env && nano .env`. See "Third-party services and API keys" below for where to get each key. Save in nano: Ctrl+O, Enter, Ctrl+X.
-3. Data directories: `mkdir -p data materials && sudo chown -R 1000:1000 data && chmod 700 data`. The container runs as uid 1000, so `data/` must be writable by it and closed to others.
+3. Data directories: `mkdir -p data materials && sudo chown -R 1000:1000 data && sudo chmod 700 data`. The container runs as uid 1000, so `data/` must be writable by it and closed to others.
 4. Build: `sudo docker compose build`.
 5. Check `.env` (expected `OK`):
    ```bash
@@ -144,19 +150,32 @@ sudo docker compose down
 - Channels: manage in the bot (`/menu`). Filter: edit `config/filter.yaml` on the server (`nano`), then `sudo docker compose restart`.
 - Profile: the ready `data/profile.json` and `data/profile.md` are tracked in git and arrive with `git clone`. Rebuild on the server only after you put your files into `/opt/search-vac-tg/materials` on the host (the directory is mounted into the container read-only, so it cannot be filled from inside): `sudo docker compose exec search-vac-tg python scripts/rebuild_profile.py && sudo docker compose restart`.
 - Volumes (`docker-compose.yml`): `./data` (database, session, profile, logs; writable), `./config`, `./materials` and `./config.ini` (read-only). Secrets come from `.env` (`env_file`). The session file gets mode 0600 automatically. `.dockerignore` keeps `.claude/`, `materials/private/`, `*.session` and `data/` out of the image. Container logs are rotated (10 MB x 3). JEV needs no extra container.
-- Backup (online, without stopping; needs `sudo apt install -y sqlite3`):
-  ```bash
-  sudo sqlite3 data/app.db ".backup data/backup-$(date +%F).db"
-  ```
-  or stop (`sudo docker compose down`), `sudo cp data/app.db data/backup-$(date +%F).db`, start again. Back up `data/telegram.session` too: it is a secret with full access to the account; store it privately and never commit it. Restore: stop the service, put `app.db` and `telegram.session` back into `data/`, start the service.
+- Backups: automatic, see "Backups" below.
 - Network: only outbound HTTPS to `openrouter.ai` and Telegram is needed. No incoming ports.
+
+## Deployment
+
+Update, rollback, health checks, backups and restore, logs: [docs/DEPLOY.md](docs/DEPLOY.md) (Russian; server bash commands first, local PowerShell commands second). In short: `git pull` and `sudo docker compose up -d --build` on the server, then `sudo docker compose ps` must show `healthy`.
+
+## Monitoring and alerts
+
+- **Heartbeat and healthcheck**: the app writes `data/heartbeat.json` every minute (`config.ini [paths] heartbeat_file`). The Docker `HEALTHCHECK` (`python -m src.health check`) is unhealthy when the file is missing or older than 180 s, or when no channel poll has finished for `2 x poll interval + 10 min`. Check: `sudo docker compose ps` (state `healthy`) or `sudo docker compose exec search-vac-tg python -m src.health check` (exit code 0).
+- **Status dashboard**: `/menu` shows notifications on/paused, active channels, the interval and time of the last poll (with the number of new posts), consecutive poll failures with the last error, the last backup and the alerts state.
+- **Alerts** to the owner chat (toggle "🔔 Alerts" in "⚙️ Settings", applies live; `config.ini [alerts] enabled` is only the initial default): bot started / stopped, channel polling failed 3 times in a row, JEV or OpenRouter errors (5 within 30 minutes), a failed backup, a damaged database at start. Alerts of the same kind are sent at most once per hour (start and stop always).
+
+## Backups
+
+- Automatic daily backup of the SQLite database (a consistent online copy) and of the Telegram session file into `data/backups` (`config.ini [backup] dir`) at `[backup] hour` local time (`[ui] timezone`, default 04:00 Europe/Sofia). Files: `app-YYYYMMDD-HHMMSS.db`, `session-YYYYMMDD-HHMMSS.session`.
+- In the bot: "⚙️ Settings -> 💾 Backups" shows the last backup, the last error and the 5 newest copies; "💾 Make a backup now" runs one immediately; "Keep last" 3 / 7 / 14 / 30 applies live (`[backup] keep` is only the initial default, 1..60). Old copies are rotated automatically. Available only for SQLite.
+- The session file gives full access to the Telegram account: it is never sent to the chat; keep copies private and never commit them.
+- Restore (server, bash): `sudo docker compose stop`, `sudo docker compose run --rm search-vac-tg python scripts/restore_backup.py --list`, then `sudo docker compose run --rm search-vac-tg python scripts/restore_backup.py data/backups/app-....db --force` (add `--session data/backups/session-....session` to restore the session too), then `sudo docker compose up -d`. The current database (and session, if restored) is first saved as a raw file copy (works even if it is corrupted) with its `-wal`/`-shm`/`-journal` files: `data/app.db.before-restore-<time>`. Copying backups off the server (PowerShell `scp`): [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## How JEV is used
 
 JEV is the TypeSafe "System One" typed-decision API: instead of free text, it returns typed answers with real probabilities and confidence.
 
 - Production call: `POST https://openrouter.ai/api/v1/systemone` with the model `~typesafe/jev-latest` (uses the same `OPENROUTER_API_KEY`; the URL is `base_url` from `config.ini` `[openrouter]` + `/systemone`). The model is set in `config.ini` `[jev] model`.
-- One call per job with three typed questions: `decision` (choice: accept / reject / review), `fit` (score 0-3, converted to 0-100) and `category` (choice). The exact texts are in [PROMPTS.md](PROMPTS.md).
+- One call per job with three typed questions: `decision` (choice: accept / reject / review), `fit` (score 0-3, converted to 0-100) and `category` (choice). The exact texts are in [docs/PROMPTS.md](docs/PROMPTS.md).
 - Only the compact profile and the normalized job text (at most `[jev] max_text_chars` = 3000 characters) are sent.
 - Guard rules (in `src/jev/classifier.py`): an ACCEPT or REJECT with confidence below `[jev] min_confidence` (0.70) becomes REVIEW; ACCEPT with fit below 1.5 of 3 becomes REVIEW; REJECT with fit 2.0 or more of 3 becomes REVIEW (inconsistent answers).
 - Cost: about $0.00003 per job (estimate; the real cost is stored per call in the `jev_usage` table and shown in `/stats`).
@@ -365,7 +384,13 @@ JEV is called only through OpenRouter with the same key; its model is set in `co
 | `[pipeline]` min_text_length | 40 | shorter posts are rejected as `too_short` |
 | `[pipeline]` retry_limit | 5 | max attempts for a failed job |
 | `[pipeline]` retry_interval_sec | 600 | how often failed jobs are retried |
-| `[logging]` level, file | `INFO`, `data/app.log` | log level and rotating log file (5 MB x 3) |
+| `[paths]` heartbeat_file | `data/heartbeat.json` | heartbeat file for the Docker healthcheck |
+| `[logging]` level, file | `INFO`, `data/app.log` | log level and log file |
+| `[logging]` max_bytes, backup_count | 5242880, 3 | log rotation: size of one file and number of archived copies |
+| `[alerts]` enabled | true | initial state of owner alerts (changed in the bot) |
+| `[backup]` dir | `data/backups` | where backups are stored |
+| `[backup]` keep | 7 | how many latest backups to keep, 1..60 (changed in the bot) |
+| `[backup]` hour | 4 | hour of the daily backup in the local timezone `[ui] timezone` |
 
 ### Adding a channel
 
@@ -403,12 +428,14 @@ Semantics: a post is rejected if it is shorter than `min_text_length`; if it has
 
 Everything below is done from your notification bot (owner only); no restart is needed. Send `/menu`.
 
-- **Main menu** (`/menu`): current state (notifications on/paused, thresholds, paid contacts, model, number of active channels) and buttons: Channels, Thresholds, Paid contacts toggle, Pause / Resume, Model, Check interval, Statistics. Commands: `/menu`, `/channels`, `/stats`, `/cancel`.
+- **Main menu** (`/menu`, also shown after `/start`) is a status dashboard: notifications on/paused, active channels, check interval and the time of the last check, poll failures, last backup, alerts, thresholds, paid contacts, model, timezone. Buttons: 📜 Journal, 📊 Statistics, 🔄 Check now, ⏸ Pause / ▶️ Resume, 📡 Channels, 👤 Profile, ⚙️ Settings. Commands: `/menu`, `/channels`, `/profile`, `/stats`, `/journal`, `/help`, `/cancel`. `/start` and `/help` show a short welcome text: what the bot does, what is on a card, the commands.
+- **⚙️ Settings** (submenu with a short description of each item): 🎯 Thresholds, 🧠 Model, ⏱ Check interval, 💰 Paid contacts on/off, 🗑 Journal retention, 🕒 Timezone, 💾 Backups, 🔔 Alerts on/off. "⬅️ Back" returns one level up. 👍/👎 on a card are stored (with a snapshot of the decision) for later analysis; they do not change the selection yet.
+- **Job card**: header "🔥 Great match" (score at or above the high threshold) or "✅ Might fit" with the score and a 10-segment bar, the category, the title, the text, "✨ Why it fits", and the labelled block 💰 Budget, 📡 Source, 👤 Contact, 🧭 Selection (rules / JEV / JEV + OpenRouter review / OpenRouter when JEV failed).
 - **Channels**: one row per channel. The first button toggles monitoring (✅ on / ⏸ off), "👆 click: yes/no" toggles `click_callbacks`, 🗑 deletes after a confirmation ("Delete @x? Yes / No"). "➕ Add channel" asks for `@username` or a `t.me/...` link (a forwarded post from the channel also works). Only public channels are supported; the account never joins anything. On an error you can retry or send `/cancel`.
 - **Thresholds**: −5 / −1 / +1 / +5 for the notification threshold and the high-fit threshold (0-100, the notification threshold cannot be above the high-fit one).
 - **Paid contacts**: toggle whether jobs with a paid contact are shown.
 - **Pause**: while paused, accepted jobs are held; after "Resume" the backlog is sent immediately.
-- **Check interval** (⏱): how often channels are polled: presets (1, 2, 5, 10, 15, 30 min, 1 h) or "✏️ Custom value" (any interval from 1 min to 24 h: `500` = minutes, or `90s`, `30m`, `2h`, `1.5h`); applies immediately (the current wait is cut short). "🔄 Check now" polls the channels right away without changing the interval and reports how many new posts were found; the screen also shows the time of the last check (UTC). `poll_interval_sec` in `config.ini` is only the default.
+- **Check interval** (⏱): how often channels are polled: presets (1, 2, 5, 10, 15, 30 min, 1 h) or "✏️ Custom value" (any interval from 1 min to 24 h: `500` = minutes, or `90s`, `30m`, `2h`, `1.5h`); applies immediately (the current wait is cut short). "🔄 Check now" polls the channels right away without changing the interval and reports how many new posts were found; the screen also shows the time of the last check (in your timezone). `poll_interval_sec` in `config.ini` is only the default.
 - **Model**: send a new OpenRouter model id, e.g. `google/gemini-2.5-flash-lite` (list: https://openrouter.ai/models); an invalid value is rejected with a message.
 
 Where settings live: after the first change from the bot the value is stored in the database and **overrides** `.env` (`NOTIFY_SCORE`, `HIGH_FIT_SCORE`, `SHOW_PAID_CONTACT`, `OPENROUTER_MODEL`). These `.env` values and `config/channels.yaml` are only initial defaults. `channels.yaml` seeds a channel only the first time it appears; a channel deleted from the bot is not re-added from the file.
@@ -431,10 +458,10 @@ How the layers work: the **base profile** `data/profile.json` comes from the rep
 
 - **Filters**: All, Sent, Rejected by rules, Rejected by JEV, Fit score too low, Paid contact, Duplicates, In progress / errors (the current one is marked with •).
 - **Period**: 24 h / 7 days / all time; pagination with ◀️ ▶️; "🔄 Refresh".
-- **Retention** ("🗑 Journal retention: N d" in `/menu` or "⚙️ Retention" under the journal): presets 14/30/60/90/180/365 days or a custom number of days. The minimum is the duplicate-detection window (presets below it are hidden). Applies live; old records are cleaned up every 6 hours.
+- **Retention** ("🗑 Journal retention: N d" in "⚙️ Settings"): presets 14/30/60/90/180/365 days or a custom number of days. The minimum is the duplicate-detection window (presets below it are hidden). Applies live; old records are cleaned up every 6 hours.
 - **Never deleted**: jobs that were sent to you and jobs with 👍/👎 feedback (with their source messages, contacts, notifications and feedback), jobs still being retried, channels and settings.
 - **Retention bounds**: minimum `max(7, dedup window_days)`, maximum `max(365, dedup window_days)`; a value from `config.ini [journal]` outside the range is logged as a warning and replaced by the nearest bound. Jobs in `notified`, `notify_uncertain`, `notifying` and every retryable status are never deleted, and a kept job keeps ALL its source messages (reposts too).
-- **Timezone** ("🕒 Timezone: Europe/Sofia" in `/menu`): presets Europe/Sofia, Europe/Moscow, Europe/Kyiv, Europe/Berlin, UTC, Asia/Almaty or your own IANA name (e.g. Europe/Warsaw). Stored in the DB, applies live to the journal, the check-interval screen and `/stats`; `config.ini [ui] timezone` is only the initial default.
+- **Timezone** ("🕒 Timezone: Europe/Sofia" in "⚙️ Settings"): presets Europe/Sofia, Europe/Moscow, Europe/Kyiv, Europe/Berlin, UTC, Asia/Almaty or your own IANA name (e.g. Europe/Warsaw). Stored in the DB, applies live to the journal, the check-interval screen and `/stats`; `config.ini [ui] timezone` is only the initial default.
 - **Performance**: an index on `messages(received_at, id)` is created automatically on start; journal counters are cached for 60 s (reset on cleanup). Pages use OFFSET, which is fine for a single-owner journal of this size (documented trade-off).
 
 ## Profile
@@ -451,7 +478,7 @@ The profile is built from your materials and used for JEV/OpenRouter decisions a
 
 ## Stats and savings
 
-`/stats` in the bot or `sudo docker compose exec search-vac-tg python scripts/stats.py` shows: messages received, duplicates, rule rejects, JEV processed / accepts / rejects / reviews / errors (and fallbacks), OpenRouter calls (review / other), notifications, skipped paid contacts, feedback, estimated JEV and OpenRouter cost, jobs by status. Counters are all-time: when old journal rows are cleaned up, their contribution is moved into an archive, so the totals do not drop; the last line shows the date since which the detailed journal is kept (in your timezone). The savings line "OpenRouter вызван для N из M прошедших правила (X% сэкономлено)" shows how many jobs JEV settled without the expensive model.
+`/stats` in the bot or `sudo docker compose exec search-vac-tg python scripts/stats.py` shows: messages received, duplicates, rule rejects, JEV processed / accepts / rejects / reviews / errors (and fallbacks), OpenRouter calls (review / other), notifications, skipped paid contacts, feedback, estimated JEV and OpenRouter cost, jobs by status. Counters are all-time: when old journal rows are cleaned up, their contribution is moved into an archive, so the totals do not drop; the last line shows the date since which the detailed journal is kept (in your timezone). The report is in Russian and split into sections (flow, JEV selection, notifications, estimated costs, jobs by status with Russian labels); the OpenRouter line ends with "сэкономлено X%": the share of jobs JEV settled without the expensive model.
 
 ## Safety
 
@@ -500,4 +527,10 @@ Tests:
 pytest -q
 # live JEV test (real network, tiny cost, needs OPENROUTER_API_KEY):
 RUN_LIVE_JEV=1 pytest -q -m live
+```
+
+Lint (ruff, settings in `ruff.toml`; `ruff` is in `requirements-dev.txt`):
+
+```bash
+ruff check src tests scripts
 ```

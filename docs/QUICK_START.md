@@ -5,7 +5,8 @@
 1. Установите Docker (если его нет) и скачайте код:
    ```bash
    curl -fsSL https://get.docker.com | sudo sh
-   cd /opt && sudo git clone https://github.com/Lightwell-bg/search-vac-tg.git
+   sudo git clone https://github.com/Lightwell-bg/search-vac-tg.git /opt/search-vac-tg
+   sudo chown -R "$USER":"$USER" /opt/search-vac-tg
    cd /opt/search-vac-tg
    ```
 
@@ -54,7 +55,7 @@
 
 3. Подготовьте каталоги данных (контейнер работает от uid 1000):
    ```bash
-   mkdir -p data materials && sudo chown -R 1000:1000 data && chmod 700 data
+   mkdir -p data materials && sudo chown -R 1000:1000 data && sudo chmod 700 data
    ```
 
 4. Соберите образ:
@@ -85,6 +86,12 @@
    ```
    В логе должна быть строка `monitoring @FreelanceBay` (выход из логов: Ctrl+C, сервис продолжит работать). В своём боте отправьте `/stats`, придёт статистика; подходящие заказы приходят карточками в бот.
 
+   Проверка состояния (через ~3 минуты после запуска ожидается `healthy`; в боте при запуске приходит «✅ Бот запущен»):
+   ```bash
+   sudo docker compose ps
+   sudo docker inspect --format '{{.State.Health.Status}}' $(sudo docker compose ps -q search-vac-tg)
+   ```
+
 9. Повседневные команды (из `/opt/search-vac-tg`):
    - Обновление:
      ```bash
@@ -102,11 +109,16 @@
      ```bash
      sudo docker compose exec search-vac-tg python scripts/rebuild_profile.py && sudo docker compose restart
      ```
-   - Бэкап базы и сессии (секрет, храните приватно):
-     ```bash
-     sudo apt install -y sqlite3
-     sudo sqlite3 data/app.db ".backup data/backup-$(date +%F).db"
-     sudo cp data/telegram.session data/telegram.session.bak
-     ```
+   - Бэкапы делаются сами раз в сутки в `data/backups` (сессия Telegram, это секрет, храните приватно). Вручную: в боте «⚙️ Настройки → 💾 Бэкапы → 💾 Сделать бэкап сейчас». Восстановление и копирование на свой компьютер: [DEPLOY.md](DEPLOY.md).
 
-10. Дальше всё настраивается в боте: отправьте `/menu` (каналы, пороги, платные контакты, пауза, модель). Команда `/journal` показывает журнал проверок: что отправлено и почему отсеяно. Настройки хранятся в базе и перекрывают `.env` / `config/channels.yaml`, которые задают лишь начальные значения.
+10. Дальше всё настраивается в боте: отправьте `/menu` (панель состояния, каналы, пауза, «⚙️ Настройки»: пороги, модель, период проверки, платные контакты, бэкапы, оповещения). `/help` — краткая справка. Команда `/journal` показывает журнал проверок: что отправлено и почему отсеяно. Настройки хранятся в базе и перекрывают `.env` / `config/channels.yaml`, которые задают лишь начальные значения.
+
+11. (Для разработки, локально, PowerShell) Тесты и линтер:
+    ```powershell
+    .venv\Scripts\Activate.ps1
+    pip install -r requirements-dev.txt
+    pytest -q
+    ruff check src tests scripts
+    ```
+
+12. Обновление, откат, мониторинг, бэкапы и восстановление: [DEPLOY.md](DEPLOY.md).

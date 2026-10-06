@@ -6,7 +6,7 @@ import pytest
 from src.bot.handlers import BotHandlers
 from src.bot.menu import (
     MenuHandlers, MenuStates, channels_keyboard, channels_text, confirm_delete_keyboard, interval_keyboard,
-    main_keyboard,
+    main_keyboard, settings_keyboard,
     main_text, parse_menu_callback, thresholds_keyboard, thresholds_text,
 )
 
@@ -37,11 +37,11 @@ def datas(kb):
 def test_main_menu_reflects_state():
     rs = rs_fake()
     t = main_text(rs, CHS)
-    assert "▶️ Уведомления включены" in t and "1 активных" in t and "скрывать" in t
-    assert "⏸ Пауза" in texts(main_keyboard(rs)) and "💰 Платные: выкл" in texts(main_keyboard(rs))
+    assert "▶️ Уведомления включены" in t and "1 активных из 2" in t and "скрывать" in t
+    assert "⏸ Пауза" in texts(main_keyboard(rs))
     rs = rs_fake(notifications_paused=True, show_paid_contact=True)
     assert "⏸ Уведомления на паузе" in main_text(rs, CHS) and "показывать" in main_text(rs, CHS)
-    assert "▶️ Продолжить" in texts(main_keyboard(rs)) and "💰 Платные: вкл" in texts(main_keyboard(rs))
+    assert "▶️ Продолжить" in texts(main_keyboard(rs))
 
 
 def test_model_and_title_are_escaped():
@@ -67,8 +67,8 @@ def test_thresholds_keyboard():
 
 def test_main_menu_shows_interval_and_button():
     rs = rs_fake(poll_interval_sec=300)
-    assert "⏱ Проверка каналов: каждые 5 мин" in main_text(rs, CHS)
-    assert "⏱ Период проверки" in texts(main_keyboard(rs))
+    assert "⏱ Проверка каждые 5 мин" in main_text(rs, CHS)
+    assert "⏱ Период проверки" in texts(settings_keyboard(rs))
 
 
 def test_interval_keyboard_marks_current():

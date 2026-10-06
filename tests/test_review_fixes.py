@@ -1,7 +1,6 @@
 """Regression tests for the Codex review of the 'manage from the bot' feature."""
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 from sqlalchemy import text
 
@@ -15,7 +14,7 @@ from src.settings_store import RuntimeSettings
 from src.telegram.client import ChannelRef
 from src.telegram.listener import ChannelListener
 
-from .helpers import FakeJevClient, FakeNotifier, TECH_TEXT, build_pipeline, jev_answers, make_post
+from .helpers import FakeJevClient, FakeNotifier, TECH_TEXT, build_pipeline, jev_answers
 from .test_channel_registry import RegTg, make, ref
 from .test_listener import PEER, FakeTg, ScriptedPipeline
 
@@ -152,7 +151,7 @@ async def test_card_uses_runtime_high_fit_threshold(repo):
     job_id = await repo.create_job(mid, "h", "x", "t", None)
     await repo.update_job(job_id, fit_score=85)
     await bot.notify_job(job_id)
-    assert "✅ Возможно подходит — 85/100" in sent[0] and "🔥" not in sent[0]
+    assert "✅ Может подойти · 85/100" in sent[0] and "🔥" not in sent[0]
     await rs.set("high_fit_score", 80)
     await bot.notify_job(job_id)
     assert "🔥" in sent[1]

@@ -4,7 +4,7 @@ from src.db.models import Job, Message
 from src.filtering.deduplicator import Deduplicator, best_fuzzy_match
 from src.telegram.parser import normalize_post
 
-from .helpers import FakeJevClient, build_pipeline, make_post
+from .helpers import build_pipeline, make_post
 
 LONG = ("Нужен разработчик Telegram bot на aiogram для интернет магазина одежды приём заявок "
         "интеграция с CRM и Google Sheets выгрузка отчётов еженедельно поддержка после запуска")

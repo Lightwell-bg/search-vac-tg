@@ -21,14 +21,18 @@ MODEL_RE = re.compile(r"^[\w.\-~:]+/[\w.\-~:]+$")
 MODEL_MAX_LEN = 100
 
 INT_KEYS = ("notify_score", "high_fit_score")
-BOOL_KEYS = ("show_paid_contact", "notifications_paused")
-ALL_KEYS = INT_KEYS + BOOL_KEYS + ("openrouter_model", "poll_interval_sec", "log_retention_days", "timezone")
+BOOL_KEYS = ("show_paid_contact", "notifications_paused", "alerts_enabled")
+ALL_KEYS = INT_KEYS + BOOL_KEYS + ("openrouter_model", "poll_interval_sec", "log_retention_days", "timezone",
+                                   "backup_keep")
 POLL_INTERVALS = (60, 120, 300, 600, 900, 1800, 3600)  # preset buttons only
 MIN_POLL_SEC = 60
 MAX_POLL_SEC = 86400
 POLL_RANGE_ERROR = "Интервал должен быть от 1 минуты до 24 часов (60..86400 секунд)"
 MIN_RETENTION_DAYS = 7      # real minimum is max(this, dedup window_days)
 MAX_RETENTION_DAYS = 365    # real maximum is max(this, dedup window_days)
+MIN_BACKUP_KEEP = 1
+MAX_BACKUP_KEEP = 60
+BACKUP_KEEP_ERROR = "Число хранимых бэкапов должно быть целым числом от 1 до 60"
 TIMEZONE_MAX_LEN = 64
 TIMEZONE_ERROR = "Неизвестный часовой пояс. Нужно имя IANA, например Europe/Warsaw или UTC"
 INTERVAL_EXAMPLES = "Примеры: 500 (минут), 30м, 90с, 2ч, 1.5ч"
@@ -100,7 +104,7 @@ class RuntimeSettings:
     def __init__(self, repo, *, notify_score: int, high_fit_score: int, show_paid_contact: bool,
                  notifications_paused: bool, openrouter_model: str, poll_interval_sec: int = 300,
                  log_retention_days: int = 30, dedup_window_days: int = 14,
-                 timezone: str = "Europe/Sofia") -> None:
+                 timezone: str = "Europe/Sofia", alerts_enabled: bool = True, backup_keep: int = 7) -> None:
         self.repo = repo
         self.notify_score = notify_score
         self.high_fit_score = high_fit_score
@@ -110,6 +114,8 @@ class RuntimeSettings:
         self.poll_interval_sec = poll_interval_sec
         self.log_retention_days = log_retention_days
         self.dedup_window_days = dedup_window_days
+        self.alerts_enabled = alerts_enabled   # owner alerts (startup, failures); config.ini [alerts] default
+        self.backup_keep = backup_keep         # backups kept per kind (db/session); config.ini [backup] default
         self.timezone = timezone   # display timezone: config.ini [ui] default, changed from the bot
         self._listeners: list[Callable[["RuntimeSettings"], Any]] = []
         self._lock = asyncio.Lock()
@@ -126,7 +132,13 @@ class RuntimeSettings:
             "poll_interval_sec": getattr(settings, "poll_interval_sec", 300),
             "log_retention_days": getattr(settings, "log_retention_days", 30),
             "timezone": getattr(settings, "timezone", "Europe/Sofia"),
+            "alerts_enabled": getattr(settings, "alerts_enabled", True),
+            "backup_keep": getattr(settings, "backup_keep", 7),
         }
+        cfg_keep = values["backup_keep"]
+        if not isinstance(cfg_keep, int) or isinstance(cfg_keep, bool) or not MIN_BACKUP_KEEP <= cfg_keep <= MAX_BACKUP_KEEP:
+            log.warning("config backup keep=%r out of range, using 7", cfg_keep)
+            values["backup_keep"] = 7
         dedup_days = getattr(settings, "dedup_window_days", 14)
         min_days, max_days = retention_min(dedup_days), retention_max(dedup_days)
         cfg_days = values["log_retention_days"]
@@ -150,6 +162,8 @@ class RuntimeSettings:
             if ok and key == "poll_interval_sec" and not MIN_POLL_SEC <= v <= MAX_POLL_SEC:
                 ok = False
             if ok and key == "log_retention_days" and not min_days <= v <= max_days:
+                ok = False
+            if ok and key == "backup_keep" and not MIN_BACKUP_KEEP <= v <= MAX_BACKUP_KEEP:
                 ok = False
             if ok and key == "timezone":
                 try:
@@ -189,6 +203,12 @@ class RuntimeSettings:
             lo, hi = retention_min(self.dedup_window_days), retention_max(self.dedup_window_days)
             if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
                 raise ValueError(retention_range_error(self.dedup_window_days))
+            return value
+        if key == "backup_keep":
+            if isinstance(value, str) and re.fullmatch(r"\s*\d{1,3}\s*", value):
+                value = int(value)
+            if isinstance(value, bool) or not isinstance(value, int) or not MIN_BACKUP_KEEP <= value <= MAX_BACKUP_KEEP:
+                raise ValueError(BACKUP_KEEP_ERROR)
             return value
         if key == "timezone":
             return valid_timezone(value)

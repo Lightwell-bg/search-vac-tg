@@ -54,6 +54,16 @@ class Database:
             await conn.run_sync(Base.metadata.create_all)
             await conn.run_sync(_migrate)
 
+    async def quick_check(self) -> str:
+        """``PRAGMA quick_check`` (SQLite only): "ok" or the problems joined by "; ".
+        Runs in the aiosqlite worker thread, the event loop is not blocked."""
+        if not self.url.startswith("sqlite"):
+            return "ok"
+        async with self.engine.connect() as conn:
+            rows = (await conn.exec_driver_sql("PRAGMA quick_check")).fetchall()
+        problems = [str(r[0]) for r in rows]
+        return "ok" if problems == ["ok"] else "; ".join(problems)[:1000] or "empty result"
+
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
         async with self._sessionmaker() as s:

@@ -7,7 +7,6 @@ All untrusted strings (titles, channel names, reasons) go through ``html.escape`
 from __future__ import annotations
 
 import html
-from datetime import datetime
 from typing import Any
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -79,7 +78,7 @@ def _entry_lines(entry, tz: str, title_max: int, reason_max: int) -> str:
 
 def header_text(counts_24h: dict[str, int]) -> str:
     c = counts_24h
-    return (f"📜 Журнал за 24 ч: всего {c.get('all', 0)} · ✅ отправлено {c.get('sent', 0)} · "
+    return (f"📜 <b>Журнал</b> за 24 ч: всего {c.get('all', 0)} · ✅ отправлено {c.get('sent', 0)} · "
             f"🧹 правила {c.get('rules', 0)} · 🤖 JEV {c.get('jev', 0)} · 📉 оценка {c.get('fit', 0)} · "
             f"💰 платные {c.get('paid', 0)} · ♻️ дубли {c.get('dup', 0)} · ⏳ в обработке {c.get('pending', 0)}")
 
@@ -122,7 +121,7 @@ def journal_keyboard(kind: str, period: str, page: int, pages: int) -> InlineKey
         nav.append(_btn("▶️", journal_data(kind, period, page + 1)))
     if nav:
         rows.append(nav)
-    rows.append([_btn("🔄 Обновить", journal_data(kind, period, page)), _btn("⚙️ Хранение", "m:jr")])
+    rows.append([_btn("🔄 Обновить", journal_data(kind, period, page))])
     rows.append([_btn("⬅️ Назад", "m:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -130,7 +129,7 @@ def journal_keyboard(kind: str, period: str, page: int, pages: int) -> InlineKey
 def retention_text(rs) -> str:
     days = getattr(rs, "log_retention_days", 30)
     lo = retention_min(getattr(rs, "dedup_window_days", 14))
-    return (f"🗑 Хранение журнала: {days} дн\n"
+    return (f"🗑 <b>Хранение журнала</b>: {days} дн\n\n"
             f"Отправленные вакансии и вакансии с 👍/👎 хранятся всегда. "
             f"Минимум {lo} дн — окно распознавания дублей.")
 
@@ -143,7 +142,7 @@ def retention_keyboard(rs) -> InlineKeyboardMarkup:
     btns = [_btn(("✅ " if d == days else "") + f"{d} дн", f"jr:{d}") for d in presets]
     rows = [btns[i:i + 3] for i in range(0, len(btns), 3)]
     rows.append([_btn("✏️ Своё значение", "jr:custom")])
-    rows.append([_btn("⬅️ Назад", journal_data("all", "d", 0))])
+    rows.append([_btn("⬅️ Назад", "m:set")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

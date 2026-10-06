@@ -60,7 +60,8 @@ class PipelineOptions:
 class Pipeline:
     def __init__(self, repo, rules: RuleFilter, dedup: Deduplicator, jev: JevClassifier,
                  llm: OpenRouterClient | None, resolver: ContactResolver, notifier: Notifier | None,
-                 profile: dict, options: PipelineOptions):
+                 profile: dict, options: PipelineOptions, on_error=None):
+        self.on_error = on_error  # optional sync hook(kind, error): "jev_errors" / "openrouter_errors"
         self.repo = repo
         self.rules = rules
         self.dedup = dedup
@@ -75,6 +76,14 @@ class Pipeline:
         self._in_progress: set[int] = set()
         self._retry_lock = asyncio.Lock()
         self._last_round_ids: list[int] = []
+
+    def _report_error(self, kind: str, err: Exception) -> None:
+        if self.on_error is None:
+            return
+        try:
+            self.on_error(kind, err)
+        except Exception:
+            log.exception("on_error hook failed")
 
     def set_profile(self, profile: dict) -> None:
         self.profile = profile
@@ -255,6 +264,7 @@ class Pipeline:
                                               error=str(err)[:500],
                                               fallback_used=self.opt.jev_fallback_to_openrouter)
                 log.warning("JEV_ERROR job %s: %s", job_id, err)
+                self._report_error("jev_errors", err)
                 if not self.opt.jev_fallback_to_openrouter:
                     await self.repo.increment_attempts(job_id)
                     await self.repo.update_job(job_id, status=JobStatus.JEV_UNAVAILABLE, last_error=str(err)[:500])
@@ -322,6 +332,7 @@ class Pipeline:
             await self.repo.increment_attempts(job_id)
             await self.repo.update_job(job_id, status=JobStatus.LLM_ERROR, last_error=str(err)[:500])
             log.warning("ERROR OpenRouter review job %s: %s", job_id, err)
+            self._report_error("openrouter_errors", err)
             return None
         await self.repo.log_llm_usage(job_id=job_id, purpose="job_review", model=usage.model,
                                       input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,

@@ -2,14 +2,13 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from src import journal as jr
 from src.bot.journal_view import (
     journal_data, journal_keyboard, journal_text, page_count, parse_journal_callback, retention_keyboard,
     retention_text, safe_url,
 )
-from src.bot.menu import MenuHandlers, MenuStates, main_keyboard, parse_menu_callback
+from src.bot.menu import MenuHandlers, MenuStates, main_keyboard, parse_menu_callback, settings_keyboard
 
 COUNTS = {"all": 9, "sent": 2, "rules": 3, "jev": 1, "fit": 1, "paid": 0, "dup": 1, "pending": 1}
 
@@ -35,7 +34,7 @@ def render(entries, kind="all", period="d", page=0, pages=1):
 
 def test_page_rendering_sample():
     t = render([entry(), entry(title="Дубль", kind="dup", reason="дубль вакансии #3", minute=4)])
-    assert "📜 Журнал за 24 ч: всего 9 · ✅ отправлено 2 · 🧹 правила 3" in t
+    assert "📜 <b>Журнал</b> за 24 ч: всего 9 · ✅ отправлено 2 · 🧹 правила 3" in t
     assert "Фильтр: Все · период: 24 ч" in t
     assert '✅ 30.09 13:05 · @chan · <a href="https://t.me/chan/1">Python bot</a>' in t  # Sofia = UTC+3
     assert "   └ отправлено, оценка 80" in t
@@ -104,9 +103,9 @@ def test_empty_state():
 
 def test_main_menu_has_journal_buttons():
     rs = SimpleNamespace(show_paid_contact=False, notifications_paused=False, log_retention_days=45)
-    t = texts(main_keyboard(rs))
+    t = texts(main_keyboard(rs)) + texts(settings_keyboard(rs))
     assert "📜 Журнал" in t and "🗑 Хранение журнала: 45 дн" in t
-    assert "j:all:d:0" in datas(main_keyboard(rs)) and "m:jr" in datas(main_keyboard(rs))
+    assert "j:all:d:0" in datas(main_keyboard(rs)) and "m:jr" in datas(settings_keyboard(rs))
     assert parse_menu_callback("jr:30") == ("jr", "30")
 
 
@@ -168,7 +167,7 @@ async def test_journal_command_sends_one_message():
     await h.cmd_journal(msg, st)
     st.clear.assert_awaited()
     args, kw = msg.answer.call_args
-    assert "📜 Журнал за 24 ч" in args[0] and kw["parse_mode"] == "HTML"
+    assert "📜 <b>Журнал</b> за 24 ч" in args[0] and kw["parse_mode"] == "HTML"
     repo.journal.assert_awaited_once()
     assert repo.journal.call_args.kwargs["kind"] == "all" and repo.journal.call_args.kwargs["limit"] == 10
 
@@ -201,7 +200,7 @@ async def test_retention_preset_and_screen():
     h = MenuHandlers(make_repo(), rs)
     cb = make_cb("m:jr")
     await h.on_callback(cb, make_state())
-    assert "Хранение журнала: 30 дн" in cb.message.edit_text.call_args.args[0]
+    assert "Хранение журнала</b>: 30 дн" in cb.message.edit_text.call_args.args[0]
     cb = make_cb("jr:90")
     await h.on_callback(cb, make_state())
     assert rs.log_retention_days == 90

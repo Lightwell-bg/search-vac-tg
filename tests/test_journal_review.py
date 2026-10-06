@@ -11,7 +11,7 @@ import src.db.repository as repo_mod
 import src.filtering.pipeline as pl
 from src import journal as jr
 from src.bot.menu import (
-    MenuHandlers, MenuStates, TIMEZONE_PRESETS, interval_text, main_keyboard, parse_menu_callback,
+    MenuHandlers, MenuStates, TIMEZONE_PRESETS, interval_text, parse_menu_callback, settings_keyboard,
     timezone_keyboard,
 )
 from src.bot.stats_format import format_stats
@@ -155,7 +155,7 @@ async def test_cleanup_archive_is_one_transaction_with_delete(repo, monkeypatch)
 def test_format_stats_shows_all_time_and_since():
     from datetime import datetime, timezone
     text = format_stats({"since": datetime(2026, 9, 30, 22, 30, tzinfo=timezone.utc)}, "Europe/Sofia")
-    assert "Итого за всё время" in text
+    assert "Статистика за всё время" in text
     assert "Подробный журнал хранится с 01.10.2026" in text      # 22:30 UTC = 01:30 next day in Sofia
     assert "хранится с" not in format_stats({})
 
@@ -276,7 +276,7 @@ def _rs():
 
 def test_main_menu_has_timezone_button_and_presets():
     rs = _rs()
-    assert "🕒 Часовой пояс: Europe/Sofia" in [b.text for r in main_keyboard(rs).inline_keyboard for b in r]
+    assert "🕒 Часовой пояс: Europe/Sofia" in [b.text for r in settings_keyboard(rs).inline_keyboard for b in r]
     assert parse_menu_callback("tz:0") == ("tz", "0")
     kb = timezone_keyboard(rs)
     labels = [b.text for r in kb.inline_keyboard for b in r]
@@ -291,7 +291,7 @@ async def test_timezone_preset_applies_live_to_interval_screen():
     h = MenuHandlers(make_repo(), rs)
     cb = make_cb("m:tz")
     await h.on_callback(cb, make_state())
-    assert "Часовой пояс: Europe/Sofia" in cb.message.edit_text.call_args.args[0]
+    assert "Europe/Sofia" in cb.message.edit_text.call_args.args[0]
     cb = make_cb("tz:1")
     await h.on_callback(cb, make_state())
     assert rs.timezone == "Europe/Moscow"
